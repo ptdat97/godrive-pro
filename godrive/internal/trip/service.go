@@ -294,6 +294,21 @@ func (s *Service) Rate(ctx context.Context, tripID, riderID string, rating int) 
 	return t, nil
 }
 
+// HasActiveTrip cho biết tài xế có chuyến nào chưa kết thúc không.
+//
+// Dùng ActiveByDriver — phương thức đã được khai báo và cài đặt ở cả hai repo
+// từ đầu nhưng chưa từng có ai gọi.
+func (s *Service) HasActiveTrip(ctx context.Context, driverID string) (bool, error) {
+	t, err := s.repo.ActiveByDriver(ctx, driverID)
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return t != nil && !t.Status.IsTerminal() && t.Status != StatusPaid, nil
+}
+
 func (s *Service) Get(ctx context.Context, tripID string) (*Trip, error) {
 	return s.repo.Get(ctx, tripID)
 }

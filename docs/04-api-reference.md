@@ -69,9 +69,14 @@ rate limit **30 req/s, burst 60 mỗi IP** (lấy IP từ `X-Forwarded-For` nế
 | `GET` | `/v1/trips/{id}` | `rider`+`driver` | `trip.get` |
 | `GET` | `/v1/trips/{id}/events` | `rider`+`driver` | `trip.events` |
 | `POST` | `/v1/trips/{id}/cancel` | `rider`+`driver` | `trip.cancel` |
+| `POST` | `/v1/trips/{id}/rate` | `rider` | `trip.rate` |
 | `POST` | `/v1/trips/{id}/arrived` | `driver` | `trip.arrived` |
 | `POST` | `/v1/trips/{id}/start` | `driver` | `trip.start` |
 | `POST` | `/v1/trips/{id}/complete` | `driver` | `trip.complete` |
+| **Ví tài xế** ||||
+| `GET` | `/v1/drivers/me/wallet` | `driver` | `wallet.wallet` |
+| `GET` | `/v1/drivers/me/statement` | `driver` | `wallet.statement` |
+| `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ đăng ký khi `DEV_AUTH=true`** |
 | **Ghép chuyến** ||||
 | `GET` | `/v1/offers` | `driver` | `matching.pending` |
 | `POST` | `/v1/offers/{id}/accept` | `driver` | `matching.accept` |
@@ -88,6 +93,7 @@ rate limit **30 req/s, burst 60 mỗi IP** (lấy IP từ `X-Forwarded-For` nế
 | `GET` | `/v1/admin/trips/{id}` | `admin` | `admin.getTrip` |
 | `GET` | `/v1/admin/trips/{id}/events` | `admin` | `admin.tripEvents` |
 | `GET` | `/v1/admin/live-map` | `admin` | `admin.liveMap` |
+| `GET` | `/v1/admin/audit` | `admin` | `admin.audit` |
 | `GET` | `/v1/admin/audit` | `admin` | `admin.audit` |
 
 ### Ví tài xế
@@ -161,6 +167,9 @@ curl -sX POST localhost:8080/v1/quotes -H "Authorization: Bearer $RIDER" \
 
 > ⚠️ `vehicle_type` **được nhận nhưng bị bỏ qua** — handler luôn gọi `EstimateAll` và trả về
 > báo giá cho **cả ba** loại xe. Client tự chọn `quote_id` phù hợp.
+
+`surge_permille` là **nguồn sự thật để tính tiền** (1000 = ×1.0). `surge_multiplier` chỉ để hiển thị —
+mọi phép nhân trên đường tiền đi qua permille bằng số nguyên.
 >
 > **`surge_permille` là nguồn sự thật để tính tiền** (1000 = ×1.0). `surge_multiplier` chỉ để hiển thị:
 > mọi phép nhân trên đường tiền đi qua số nguyên, không qua float.
@@ -280,6 +289,10 @@ curl -sX POST localhost:8080/v1/admin/drivers/drv_01J.../kyc \
 | `point_out_of_range` / `mock_location` / `low_accuracy` / `implausible_jump` | invalid/forbidden | `location.Ingest` |
 | `point_invalid` / `vehicle_type_invalid` / `quote_expired` | invalid | `pricing` |
 | `payment_method_invalid` / `request_in_flight` | invalid/conflict | `trip.Create` |
+| `rating_invalid` / `trip_not_finished` / `trip_already_rated` / `trip_has_no_driver` | invalid/conflict | `trip.Rate` |
+| `insurance_until_invalid` | invalid | `driver.Onboard` — hạn bảo hiểm phải là `YYYY-MM-DD` |
+| `amount_invalid` / `from_invalid` / `to_invalid` / `range_invalid` / `range_too_wide` | invalid | API ví |
+| `target_type_invalid` | invalid | `admin.Audit` |
 | `trip_not_found` / `trip_exists` / `not_your_trip` | not_found/conflict/forbidden | `trip` |
 | **`invalid_transition`** | conflict | `trip.transition` — máy trạng thái |
 | `trip_not_searching` / `trip_already_final` / `trip_version_conflict` | conflict | `trip` |

@@ -175,17 +175,22 @@ Không tài xế nào nhận sau 3 vòng → `Matcher.Dispatch` gọi `trips.Exp
 
 `internal/platform/eventbus` — interface `Bus`, bản hiện tại in-memory ([bus.go:63](../godrive/internal/platform/eventbus/bus.go#L61)).
 
+> **Cập nhật GĐ 2:** sự kiện nay đi qua **Transactional Outbox** ở chế độ Postgres — `trip.Save`
+> ghi chúng vào bảng `outbox` trong cùng transaction với thay đổi nghiệp vụ, relay quét mỗi 200ms
+> và phát lên bus. Ngữ nghĩa chuyển từ **at-most-once** sang **at-least-once**.
+
 | Topic | Publisher | Subscriber hiện có |
 |---|---|---|
-| `trip.requested` | `trip.Create` | `app.onTripRequested` → spawn dispatch |
-| `trip.assigned` | `trip.Assign` | **(không)** |
-| `trip.started` | `trip.Start` | `app.setDriverStatus(ON_TRIP)` |
-| `trip.completed` | `trip.Complete` | `app.onTripCompleted` → ghi sổ + MarkPaid + IDLE |
+| `trip.requested` | `trip.Create` | `app.onTripRequested` → spawn dispatch · `app.onTripRequestedSurge` → đếm cầu |
+| `trip.assigned` | `trip.Assign` | `app.syncDriverStatus` |
+| `trip.started` | `trip.Start` | `app.syncDriverStatus` |
+| `trip.completed` | `trip.Complete` | `app.onTripCompleted` → ghi sổ + MarkPaid + thống kê + đồng bộ trạng thái |
 | `trip.cancelled` | `trip.Cancel` | `app.onTripCancelled` → ghi sổ phí huỷ + trả tài xế về IDLE |
 | `driver.online` / `driver.offline` | `driver.GoOnline/GoOffline` | **(không)** |
-| `offer.created` | `matching.DispatchRound` | **(không)** |
-| `offer.accepted` | `matching.Accept` | **(không)** |
+| `offer.created` | `matching.DispatchRound` | `app.onOfferStat` → mẫu số tỉ lệ nhận |
+| `offer.accepted` | `matching.Accept` | `app.onOfferStat` → tử số tỉ lệ nhận |
 | `payment.settled` | `wallet.SettleTrip` | **(không)** |
+| `trip.rated` | `trip.Rate` | `app.onTripRated` → cộng điểm đánh giá |
 | `wallet.balance_changed` | `wallet.SettleTrip` / `TopUp` / `PostCancelFee` | `app.onWalletBalanceChanged` → đồng bộ cột cache `drivers.wallet_balance` |
 
 ### Ngữ nghĩa giao hàng hiện tại: **at-most-once**

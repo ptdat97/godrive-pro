@@ -40,20 +40,25 @@ Nguồn: [`migrations/0001_init.up.sql`](../godrive/migrations/0001_init.up.sql)
 
 ## 2.3 Ma trận sở hữu — bảng nào, module nào, đã có repo chưa
 
+> **Cập nhật sau GĐ 0–2:** 6/9 store đã có repo Postgres. Ba store còn ở bộ nhớ
+> (`location.index`, `pricing.quotes`, `idem.keys`) là lý do hệ thống **vẫn chỉ chạy đúng với một
+> bản sao** — `app.New()` log cảnh báo nêu đích danh chúng lúc khởi động.
+
 | Bảng | Module sở hữu | Repo Postgres | Repo bộ nhớ | Trạng thái |
 |---|---|:---:|:---:|---|
 | `accounts` | `identity` | ✅ | ✅ | 🟢 **đã thông** — `identity.PostgresRepo`, GĐ 0 |
 | `otp_challenges` | `identity` | ✅ | ✅ | 🟢 GĐ 0. Redis hợp hơn (TTL 5'), bảng là đường dự phòng; job dọn chạy trong worker |
 | `drivers` | `driver` | ✅ | ✅ | 🟢 **đã đủ giấy tờ** — thêm `insurance_no`/`insurance_until`, `scan()` đọc lại `Documents` |
-| `driver_locations` | `location` | ❌ | ✅ (`MemoryIndex`) | 🟡 chỉ mục chỉ tồn tại trong RAM |
+| `driver_locations` | `location` | ❌ | ✅ (`MemoryIndex`) | 🟡 chỉ mục chỉ tồn tại trong RAM — GĐ 3 thay bằng Redis GEO |
+| `trip_claims` | `matching` | ✅ | ✅ | 🟢 GĐ 2 — khoá giành chuyến; GĐ 3 chuyển sang Redis `SET NX` |
 | `trips` | `trip` | ✅ | ✅ | 🟢 |
 | `trip_events` | `trip` | ✅ (cùng tx với `trips`) | ✅ | 🟢 |
-| `offers` | `matching` | ❌ | ✅ | 🔴 offer + khoá chuyến mất khi restart |
+| `offers` | `matching` | ✅ | ✅ | 🟢 GĐ 2 — `offers_one_accepted_per_trip` **đã thật sự bảo vệ** |
 | `ledger_entries` | `wallet` | ✅ | ✅ | 🟢 **đã bền** (GĐ 1) + `CHECK (account_id <> '')` |
 | `ledger_transactions` | `wallet` | ✅ | ✅ (map `txs`) | 🟢 `PRIMARY KEY (tx_id)` là chốt idempotency |
-| `admin_audit_log` | `admin` | ✅ | ✅ | 🟢 GĐ 1, chỉ thêm mới |
-| `idempotency_keys` | `pkg/idem` | ❌ | ✅ | 🟡 retry chống trùng chỉ hiệu lực trong 1 tiến trình |
-| `outbox` | `outbox` | ❌ | ✅ (không ai ghi) | 🔴 relay chạy nhưng no-op ([G-06](05-doi-chieu-spec-code.md#g-06)) |
+| `admin_audit_log` | `admin` | ✅ | ✅ | 🟢 GĐ 1 — chỉ thêm mới |
+| `idempotency_keys` | `pkg/idem` | ❌ | ✅ | 🟡 chỉ hiệu lực trong 1 tiến trình. Đã sửa rò rỉ + cuộc đua ([G-29](05-doi-chieu-spec-code.md#g-29), [G-32](05-doi-chieu-spec-code.md#g-32)) |
+| `outbox` | `outbox` | ✅ | ✅ | 🟢 GĐ 2 — ghi **cùng transaction** với thay đổi nghiệp vụ; relay có DLQ |
 
 **Đọc bảng này thế nào:** cột "Repo Postgres ❌" nghĩa là bảng đã có DDL trong migration nhưng
 **không có một dòng Go nào INSERT/SELECT nó**. Còn **3/12** bảng ở tình trạng này
@@ -81,10 +86,17 @@ CREATE UNIQUE INDEX drivers_plate_uidx ON drivers (vehicle_plate);
 UNIQUE (phone, role)  -- trên accounts
 ```
 
-> ⚠️ **Hai unique index quan trọng nhất (`trips_one_active_per_driver`, `offers_one_accepted_per_trip`)
-> hiện KHÔNG bảo vệ gì cả**, vì `offers` chưa có repo Postgres và chế độ Postgres thì chưa chạy được.
-> Ở chế độ in-memory, chốt chặn duy nhất là `matching.Store.ClaimTrip` + `driver.Reserve` CAS.
-> Test `TestOnlyOneDriverWinsTrip` verify đúng hai lớp này — nhưng lớp CSDL vẫn là lớp phòng thủ chưa được kích hoạt.
+> ✅ **Cả hai unique index nay đã thật sự bảo vệ** (GĐ 0 mở khoá chế độ Postgres, GĐ 2 đưa `offers`
+> xuống CSDL). Hệ thống có **ba lớp** chống ghép trùng, mỗi lớp độc lập với lớp kia:
+>
+> 1. `matching.Store.ClaimTrip` — nguyên tử. Bản Postgres gộp "giành / giành lại khi hết hạn /
+>    giữ nguyên" vào một câu `INSERT … ON CONFLICT … RETURNING`.
+> 2. `driver.Reserve` — CAS `WHERE status='IDLE' AND version=$N`.
+> 3. `offers_one_accepted_per_trip` — chốt chặn cuối ở tầng CSDL, **một bug ở tầng ứng dụng không
+>    đi vòng qua được**.
+>
+> Kiểm chứng: `TestOnlyOneDriverWinsTrip` (lớp 1–2), `TestPostgresClaimTripIsAtomic` (16 goroutine
+> tranh một chuyến), `TestPostgresOfferUniqueIndexBlocksDoubleAccept` (lớp 3).
 
 ### Index hiệu năng
 
@@ -95,7 +107,9 @@ UNIQUE (phone, role)  -- trên accounts
 | `driver_locations_geom_idx GIST (geom)` | truy vấn lân cận theo bán kính |
 | `ledger_account_idx (account_id, account_type, created_at)` | tính số dư = `SUM(amount_vnd)`, sao kê |
 | `offers_driver_pending_idx (driver_id) WHERE status='PENDING'` | `GET /v1/offers` |
-| `outbox_unpublished_idx (created_at) WHERE published_at IS NULL` | relay quét việc chưa publish |
+| `outbox_unpublished_idx (created_at) WHERE published_at IS NULL` | relay quét việc chưa publish, mỗi 200ms |
+| `admin_audit_target_idx (target_type, target_id, at DESC)` | "hồ sơ này ai đã đụng vào" |
+| `trip_claims_expiry_idx (expires_at)` | dọn khoá giành chuyến đã hết hạn |
 
 ---
 

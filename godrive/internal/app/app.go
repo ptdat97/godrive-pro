@@ -127,6 +127,8 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	// chọn ứng viên, và một lần nữa khi tài xế bấm nhận (số dư có thể đã đổi
 	// giữa hai thời điểm đó).
 	driverSvc.UseBalanceReader(walletSvc)
+	// Cho phép tài xế tự thoát khỏi trạng thái kẹt khi không còn chuyến nào chạy.
+	driverSvc.UseTripPort(tripSvc)
 
 	var offerStore matching.Store = matching.NewMemoryStore(clk)
 	if db != nil {

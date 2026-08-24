@@ -128,7 +128,7 @@ bất kỳ dịch vụ nào trong này**.
 
 | Dịch vụ | Image | Cổng | Đã nối vào code? |
 |---|---|---|---|
-| `postgres` | `postgis/postgis:16-3.4` | 5432 | 🟡 chỉ `drivers` + `trips` |
+| `postgres` | `postgis/postgis:16-3.4` | 5432 | ✅ `accounts`, `drivers`, `trips`, `trip_events`, `offers`, `trip_claims`, sổ cái, outbox, nhật ký admin |
 | `redis` | `redis:7-alpine` (AOF) | 6379 | ❌ chưa |
 | `nats` | `nats:2.10-alpine` (`-js`) | 4222, 8222 | ❌ chưa |
 | `emqx` | `emqx/emqx:5.6` | 1883, 18083 | ❌ chưa |
@@ -205,7 +205,8 @@ Căn cứ: **Nghị định 13/2023** (bảo vệ dữ liệu cá nhân) và **N
 
 ## 8.7 Câu SQL kiểm tra sức khoẻ
 
-Sau khi [T-02](07-todo.md#t-02) xong, chạy định kỳ trong CI **và** production:
+**9 câu dưới đây đã được chạy thật sau mỗi lần kiểm chứng đầu-cuối và đều sạch.**
+Chạy định kỳ trong CI **và** production:
 
 ```sql
 -- BẤT BIẾN #1: mọi giao dịch phải cân bằng. Phải trả 0 dòng.
@@ -226,8 +227,25 @@ SELECT t.id FROM trips t
 LEFT JOIN trip_events e ON e.trip_id = t.id
 GROUP BY t.id, t.status HAVING count(e.id) = 0;
 
+-- BẤT BIẾN #5: mỗi chuyến chỉ có một offer ACCEPTED. Phải trả 0 dòng.
+SELECT trip_id, count(*) FROM offers
+WHERE status='ACCEPTED' GROUP BY trip_id HAVING count(*) > 1;
+
+-- BẤT BIẾN #6: tài xế IDLE phải có mốc bắt đầu rảnh. Phải trả 0.
+SELECT count(*) FROM drivers WHERE status='IDLE' AND idle_since IS NULL;
+
 -- SỨC KHOẺ: outbox tồn đọng (cảnh báo nếu > 100 hoặc cũ hơn 60 giây).
 SELECT count(*), min(created_at) FROM outbox WHERE published_at IS NULL;
+
+-- SỨC KHOẺ: sự kiện CHẾT — đã thử quá 10 lần. Bất kỳ giá trị nào khác 0 đều cần người xem,
+-- vì đó là sự kiện nghiệp vụ đã mất.
+SELECT id, topic, attempts, created_at FROM outbox
+WHERE published_at IS NULL AND attempts >= 10;
+
+-- SỨC KHOẺ: bút toán mồ côi, không thuộc giao dịch nào. Phải trả 0.
+SELECT count(*) FROM ledger_entries e
+LEFT JOIN ledger_transactions t ON t.tx_id = e.tx_id
+WHERE t.tx_id IS NULL;
 
 -- BẤT BIẾN #5: mọi bút toán thuộc một giao dịch đã đăng ký. Phải trả 0.
 SELECT count(*) FROM ledger_entries e
@@ -261,8 +279,9 @@ ORDER BY 2;
 - [ ] **`DEV_AUTH=false`** ⇒ `POST /v1/drivers/me/topup` không được đăng ký. Kiểm bằng cách gọi thử: phải trả 404
 - [ ] Role ứng dụng **không có** `UPDATE`/`DELETE` trên `ledger_entries`, `trip_events`, `admin_audit_log` ([T-27](07-todo.md#t-27))
 - [ ] Không còn dòng log `"một số store vẫn ở bộ nhớ dù đã bật Postgres"` lúc khởi động
-- [ ] Cả 6 câu SQL bất biến ở §8.7 trả về kết quả sạch trên dữ liệu staging
-- [ ] `go test ./... -race` xanh ở **cả** in-memory lẫn Postgres
+- [ ] Cả 9 câu SQL bất biến ở §8.7 trả về kết quả sạch trên dữ liệu staging
+- [x] `go test ./... -race -count=6` xanh ở **cả** in-memory lẫn Postgres ✅
+- [ ] `DEV_AUTH=false` ⇒ endpoint `POST /v1/drivers/me/topup` **không được đăng ký** (kiểm bằng curl, phải trả 404)
 - [ ] Sao lưu Postgres + đã **thử khôi phục thật**, không chỉ cấu hình sao lưu
 
 ### Pháp lý (spec §10 rủi ro #2)

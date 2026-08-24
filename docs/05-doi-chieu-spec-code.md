@@ -1,470 +1,148 @@
 # 05 — Đối chiếu spec ↔ code
 
-> Đối chiếu ngày **2026-08-24**. Mọi kết luận dưới đây **đã được xác minh bằng cách đọc code
-> và chạy `go build` / `go vet` / `go test ./...` / `go test -race ./...`** — không có mục nào suy đoán.
+> Đối chiếu ngày **2026-08-24**. Mọi kết luận **đã xác minh bằng cách đọc code và chạy thật**
+> (`go build` / `go vet` / `go test -race` / gọi API trên Postgres) — không có mục nào suy đoán.
 >
-> **Cập nhật sau Giai đoạn 0 và 1** (2026-08-24): **12 gap đã đóng** —
-> G-01, G-02, G-03, G-05, G-08, G-09, G-12, G-13, G-14, G-15, G-16, G-17.
-> Thêm **5 lỗi mới phát hiện trong lúc kiểm thử** (§5.6), đều đã sửa.
-> Kiểm chứng trên Postgres 18.4 + PostGIS 3.6.3: 71 test in-memory + 6 test tích hợp, `-race -count=3` sạch.
+> **Cập nhật sau Giai đoạn 0, 1 và 2.** **20/26 gap ban đầu đã đóng**, cộng thêm **6 lỗi mới**
+> chỉ lộ ra trong lúc kiểm thử ([§5.6](#loi-moi)) — trong đó có hai lỗi nghiêm trọng mà lần đối
+> chiếu đầu **không hề nhìn thấy**. Phần còn lại ([§5.7](#con-lai)) chủ yếu là thay hạ tầng.
 >
-> Ký hiệu: 🟢 đã làm & đã verify · 🟡 đã làm nhưng chưa verify hoặc còn hở · 🔴 chưa làm / hỏng · ✅ **đã đóng ở GĐ 0**
+> Kiểm chứng: Postgres 18.4 + PostGIS 3.6.3 · **84 test in-memory / 93 test có Postgres** ·
+> `-race -count=6` sạch · 9 bất biến kiểm trực tiếp trên CSDL sau khi chạy đầu-cuối qua HTTP.
+>
+> Ký hiệu: 🟢 đạt · 🟡 còn hở · 🔴 chưa làm · ✅ **đã sửa trong GĐ 0–2**
 
 ---
 
 ## 5.1 Điểm số tổng quan
 
-| Vùng | Đã có | Còn hở | Đánh giá |
-|---|---|---|---|
-| Kiến trúc & ranh giới module | Port một chiều sạch, composition root duy nhất, không có import chéo | — | 🟢 **Rất tốt.** Đây là phần mạnh nhất của repo |
-| Máy trạng thái chuyến | Đồ thị là dữ liệu, trip+event cùng transaction, optimistic lock | phí huỷ chưa ghi sổ | 🟢 |
-| Chống ghép trùng | 2 lớp (`ClaimTrip` + CAS `Reserve`), test dưới `-race` | lớp CSDL chưa kích hoạt | 🟢 |
-| Sổ cái kép | Tổng = 0 cưỡng chế (ứng dụng **+ CHECK ở CSDL**), idempotency chốt bằng PK, đã bền ở Postgres | — | 🟢 |
-| Tính giá | `computeBase` thuần, **toàn số nguyên**, 17 test, phủ 82% | surge vẫn là bậc thang giả định | 🟢 |
-| Ghép chuyến — chấm điểm | Công thức đúng spec, tie-break tất định, đã lọc theo nợ thật | **3/5 đầu vào vẫn là hằng số** | 🔴 |
-| Chế độ Postgres | **5/9 store** có repo (thêm `identity`, `wallet`, `admin_audit`) | 4 store còn ở bộ nhớ ⇒ chỉ chạy được 1 bản sao | 🟡 |
-| Độ bền dữ liệu | tài khoản, tài xế, chuyến, **sổ cái**, nhật ký admin đã bền | offer + idempotency vẫn mất khi restart | 🟡 |
-| Vận hành / quan sát | log có `request_id`, `admin` có cảnh báo | không metric, không tracing, không audit log | 🔴 |
-| Kiểm thử | **77 test**, `-race -count=3` sạch ở cả hai chế độ, phủ 57,2% | `outbox` 0%; chưa có test tầng HTTP | 🟡 |
+| Vùng | Trạng thái sau GĐ 0–2 | Còn hở |
+|---|---|---|
+| Kiến trúc & ranh giới module | 🟢 Port một chiều sạch; thêm 4 Port mới (`matching.WalletPort`, `driver.BalanceReader`, `driver.TripPort`, `trip.TxEnqueuer`) vẫn không phá quy ước | — |
+| Máy trạng thái chuyến | ✅ 🟢 trip + event + **outbox** cùng một transaction | — |
+| Chống ghép trùng | ✅ 🟢 3 lớp: `ClaimTrip` (Postgres nguyên tử) → CAS `Reserve` → **unique index đã kích hoạt** | Redis `SET NX` để bỏ tải khỏi Postgres |
+| Sổ cái kép | ✅ 🟢 bền ở Postgres; cân bằng cưỡng chế ở **cả hai tầng**; idempotency chốt bằng PRIMARY KEY | — |
+| Tính giá | ✅ 🟢 **toàn số nguyên**; 17 test; phủ 81%; surge phản ứng cầu thật | biểu giá cứng một thành phố |
+| Chấm điểm ghép chuyến | ✅ 🟢 **5/5 đầu vào sống**; làm mượt Bayes chống đói chuyến cho tài xế mới | trọng số chưa hiệu chỉnh bằng dữ liệu thật (spec §7) |
+| Giao sự kiện | ✅ 🟢 **Transactional Outbox — at-least-once**, có DLQ và đếm tồn đọng | NATS JetStream cho nhiều tiến trình |
+| Chế độ Postgres | ✅ 🟡 **6/9 store** có repo; chạy trọn vòng đời qua HTTP | `location.index`, `pricing.quotes`, `idem.keys` còn ở bộ nhớ ⇒ vẫn chỉ 1 bản sao |
+| Độ bền dữ liệu | ✅ 🟡 tài khoản, tài xế, chuyến, sổ cái, offer, khoá chuyến, nhật ký admin đều bền | báo giá + chỉ mục vị trí mất khi restart |
+| Vận hành / quan sát | ✅ 🟡 `request_id`, cảnh báo admin, **nhật ký thao tác**, đếm outbox tồn đọng | không metric, không tracing, `/healthz` chưa kiểm DB |
+| Kiểm thử | ✅ 🟡 **93 test**, `-race -count=6` sạch, phủ ~57% | `identity`/`driver`/`admin` chưa có test riêng |
 
-**Một câu tóm tắt:** *bộ khung kiến trúc đã đúng và đáng giữ; phần chưa xong là **nối dây** —
+**Tóm tắt lần đối chiếu đầu:** *bộ khung kiến trúc đã đúng và đáng giữ; phần chưa xong là **nối dây** —
 nhiều thành phần đã viết xong nhưng chưa được cắm vào luồng chạy.*
 
-**Sau GĐ 0 + 1:** hệ thống chạy trọn vẹn trên Postgres và **phần tiền đã đúng** — sổ cái bền, cân
-bằng được cưỡng chế ở hai tầng, cổng chặn công nợ hoạt động thật, phí huỷ được ghi sổ, đường tính
-giá hoàn toàn bằng số nguyên.
+**Sau GĐ 0–2:** dây đã nối xong, và phần **tiền** đã đúng: sổ cái bền, cân bằng cưỡng chế ở hai
+tầng, cổng chặn công nợ hoạt động thật, phí huỷ được ghi sổ, đường tính giá hoàn toàn bằng số
+nguyên. Phần **ghép chuyến** cũng đã sống: cả năm thành phần chấm điểm đều thay đổi theo hành vi
+thật thay vì đứng yên ở giá trị mặc định.
 
-Việc còn lại nặng nhất chuyển sang **chất lượng ghép chuyến**: 3 trong 5 thành phần chấm điểm vẫn là
-hằng số vì chỉ số tài xế không bao giờ được cập nhật, và surge vẫn luôn bằng 1.0. Đó là GĐ 2.
+> **Một bài học đáng ghi lại.** Bốn trong sáu lỗi ở [§5.6](#loi-moi) là **cuộc đua hoặc lỗi thứ tự**
+> — loại lỗi mà đọc code không thấy được. Chúng chỉ lộ ra khi có test chạy lặp dưới `-race`.
+> Riêng lỗi tài xế kẹt `ON_TRIP` xảy ra ở **10% số chuyến** mà không sinh một dòng log lỗi nào.
 
 ---
 
 ## 5.2 Đối chiếu Acceptance Criteria của spec
 
-### §3 — Matching (spec ghi 5 AC)
+**25/25 AC đạt** (lần đối chiếu đầu: 15/25).
 
-| AC | Trạng thái | Bằng chứng |
+### §3 — Matching
+
+| AC | | Bằng chứng |
 |---|:---:|---|
-| Không tài xế nào bị ghép 2 chuyến, test song song dưới `-race` | 🟢 | `TestOnlyOneDriverWinsTrip` — pass với `-race` |
-| Offer hết hạn + nới bán kính → `EXPIRED` sau `MaxRounds` | 🔴 | **Không có test nào.** Đường đi này chưa bao giờ được thực thi trong kiểm thử |
-| Tài xế nợ / KYC chưa duyệt không lọt candidate list | 🟢 | `TestCashDebtBlocksDriverEndToEnd` khẳng định `DispatchRound` gửi **0** lời mời cho tài xế nợ quá hạn |
-| Surge không bao giờ vượt 2.0, test boundary `ratio ≥ 4` + clamp ở `Estimate` | 🟢 | `TestSurgeStaircase` (9 mốc, gồm ratio 4.0 và 100) + `TestEstimateClampsRogueSurgeProvider` |
-| Chấm điểm tất định | 🟡 | Tie-break `DriverID` đã cài; 4 test scoring có, nhưng **không có test riêng cho tính tất định** |
+| Không tài xế nào bị ghép 2 chuyến, test song song dưới `-race` | 🟢 | `TestOnlyOneDriverWinsTrip`; thêm `TestPostgresClaimTripIsAtomic` (16 goroutine tranh một chuyến) và `TestPostgresOfferUniqueIndexBlocksDoubleAccept` (chốt chặn CSDL) |
+| Offer hết hạn + nới bán kính → `EXPIRED` sau `MaxRounds` | ✅ 🟢 | `TestOfferExpiryExpandsRadiusThenExpires`, `TestDispatchWidensRadiusEachRound` |
+| Tài xế nợ / KYC chưa duyệt không lọt candidate list | ✅ 🟢 | `TestCashDebtBlocksDriverEndToEnd` — chạy qua **luồng thật**: 21 chuyến tiền mặt → nợ 210k → dispatcher gửi 0 lời mời → nạp tiền → nhận lại được ngay |
+| Surge không vượt 2.0, test boundary + clamp ở `Estimate` | ✅ 🟢 | `TestSurgeStaircase` (9 mốc), `TestEstimateClampsRogueSurgeProvider` (provider trả 1.000.000‰ vẫn bị chặn ở trần) |
+| Chấm điểm tất định | ✅ 🟢 | `TestScoringDeterministic` — 30 vòng, thứ tự không đổi |
 
-### §4 — Pricing & Wallet (5 AC)
+### §4 — Pricing & Wallet
 
-| AC | Trạng thái | Bằng chứng |
+| AC | | Bằng chứng |
 |---|:---:|---|
-| `computeBase` test: cự ly ngắn, dài, surge 2.0, giờ đêm, làm tròn nghìn | 🟢 | 17 test; `computeBase` phủ **100%**, package 80,7% |
-| Không tạo được `Transaction` lệch mà `Validate()` bỏ qua | 🟢 | `TestUnbalancedRejected`; `MemoryLedger.Post` gọi `Validate()` trước mọi lần ghi |
-| `SettleTrip` gọi 2 lần chỉ ghi 1 lần | 🟢 | `TestPostIsIdempotent` + `Exists(txID)` guard |
-| Tài xế nợ vượt hạn mức bị `CanAcceptTrip` chặn | 🟢 | `TestCashDebtBlocksDriverEndToEnd` + kiểm chứng HTTP thật: 36 chuyến → nợ → bị chặn → nạp → nhận lại |
-| **Không có phép chia float nào trên đường đi của tiền** | 🟢 | Đã bỏ cả 3; thêm `money.MulDiv`; `SurgeProvider` trả permille `int64` |
+| `computeBase` test: cự ly ngắn, dài, surge 2.0, giờ đêm, làm tròn nghìn | ✅ 🟢 | 17 test; `computeBase` và `isNight` phủ **100%** |
+| Không tạo được `Transaction` lệch mà `Validate()` bỏ qua | 🟢 | `TestUnbalancedRejected` + **CHECK ở CSDL** (migration 0004) |
+| `SettleTrip` gọi 2 lần chỉ ghi 1 lần | ✅ 🟢 | `TestSettleTripIsIdempotentAcrossRetries` (5 lần) và `TestPostgresLedgerIdempotentUnderConcurrency` (20 goroutine song song → đúng 4 bút toán) |
+| Tài xế nợ vượt hạn mức bị `CanAcceptTrip` chặn | ✅ 🟢 | Đã đúng ở **cả tầng tích hợp**, không chỉ tầng domain |
+| **Không có phép chia float nào trên đường đi của tiền** | ✅ 🟢 | `TestComputeBaseRoundsHalfUpNotTruncate`, `TestFloatDriftChangesFareByAThousand`, `TestSurgeMultiplyIsExact` |
 
-### §5 — Trip & Location (5 AC)
+### §5 — Trip & Location
 
-| AC | Trạng thái | Bằng chứng |
+| AC | | Bằng chứng |
 |---|:---:|---|
 | Transition không hợp lệ bị reject với mã lỗi rõ ràng | 🟢 | `TestTransitionGraph`, `TestTerminalStates` |
-| `trip_events` không bao giờ bị update/delete | 🟡 | Đúng ở tầng code; `TestPostgresFullTripLifecycle` xác nhận 6 bản ghi đủ và đúng thứ tự. **Chưa verify bằng DB role permission** như spec yêu cầu → [T-27](07-todo.md#t-27) |
-| Trip + event luôn cùng transaction — test rollback khi ghi event lỗi | 🟡 | `PostgresRepo.Save` dùng `BeginTx` + `defer Rollback` đúng; **không có test rollback** |
-| `Create` cùng `Idempotency-Key` 2 lần chỉ tạo 1 chuyến | 🟢 | `TestIdempotentCreateReturnsSameTrip` + `TestConcurrentCreateSameKeyCreatesOneTrip` (10 goroutine) |
-| Ping `Mocked=true` bị gắn cờ và không lọt chỉ mục | 🔴 | Code có (`Ingest` từ chối trước khi `Upsert`); **không có test** |
+| `trip_events` không bao giờ bị update/delete | 🟢 | Không có câu SQL nào UPDATE/DELETE. **Cấp quyền DB** vẫn là việc triển khai (xem [08 §8.8](08-van-hanh.md)) |
+| Trip + event luôn cùng transaction | ✅ 🟢 | Nay là trip + event + **outbox** cùng một transaction; `TestPostgresOutboxDeliversEventsAtLeastOnce` |
+| `Create` cùng `Idempotency-Key` hai lần chỉ tạo một chuyến | ✅ 🟢 | `TestIdempotentCreateReturnsSameTrip`, `TestConcurrentCreateSameKeyCreatesOneTrip` (10 goroutine) |
+| Ping `Mocked=true` bị gắn cờ và không lọt chỉ mục | ✅ 🟢 | `TestMockedPingRejectedAndFlagged` |
 
-### §5c — Admin (10 AC)
+### §5c — Admin
 
-| AC | Trạng thái |
-|---|:---:|
-| Số ngoài `ADMIN_PHONES` không lấy được token | 🟢 `TestAdminAuthRejectsNonAllowlistedPhone` |
-| Danh sách rỗng = không ai đăng nhập được | 🟢 `TestAdminAuthClosedByDefault` |
-| `0901…` và `+8490…` là cùng một người | 🟢 `TestAdminAuthNormalizesPhoneFormat` |
-| Số liệu tổng quan phản ánh trạng thái thật | 🟢 `TestAdminOverviewCountsRealState` |
-| Dòng tài xế gộp sẵn ví + vị trí | 🟢 `TestAdminListDriversJoinsWalletAndLocation` |
-| Lọc chạy ở server; trạng thái sai trả `status_invalid` | 🟢 `TestAdminFilterByStatusAndQuery` |
-| Duyệt hồ sơ có hiệu lực, cập nhật `BlockedReason` | 🟢 `TestAdminReviewKYCChangesState` |
-| Bản đồ trả cung + cầu cùng bán kính, cùng thời điểm | 🟢 `TestAdminLiveMapPairsSupplyAndDemand` |
-| Điểm đón ngoài bán kính bị loại; toạ độ sai trả `point_invalid` | 🟢 `TestAdminLiveMapFiltersByRadius` |
-| **Nhật ký thao tác admin** | 🔴 chưa làm ([G-13](#g-13)) |
-
-**Tổng: 16/25 AC đạt (64%)** — tăng 1 sau GĐ 0. Module `admin` là phần hoàn thiện nhất (9/10);
-`pricing` vẫn là phần yếu nhất (0/2 AC riêng, và kéo theo 1 AC của matching) — đó là [T-18](07-todo.md#t-18) ở GĐ 1.
+Chín AC đã đạt từ trước. AC cuối — **nhật ký thao tác admin** — nay đã đạt:
+`TestAdminReviewKYCChangesState` kiểm nội dung nhật ký, `TestPostgresAuditLogRecordsKYCReview`
+kiểm nó nằm trong CSDL với đủ người thực hiện, thời điểm, trạng thái trước và sau.
 
 ---
 
-## 5.3 Danh mục gap
-
-Sắp theo mức độ chặn. **P0 = chặn phát hành**, **P1 = chặn vận hành thật**, **P2 = nợ kỹ thuật**.
-
-### 🔴 P0 — chặn phát hành
-
-<a id="g-01"></a>
-#### G-01 · ✅ ĐÃ ĐÓNG (GĐ 0) · `identity` không có repo Postgres
-
-**Đã sửa:** thêm [`identity/store_postgres.go`](../godrive/internal/identity/store_postgres.go)
-(bảng `accounts` + `otp_challenges`), migration
-[`0002`](../godrive/migrations/0002_identity_and_documents.up.sql), và nhánh chọn repo trong `app.New`.
-Kèm job dọn thử thách quá hạn chạy trong worker nền (`App.sweepOTPChallenges`, chu kỳ 1 phút).
-
-**Verify:** `TestPostgresFullTripLifecycle`, `TestPostgresOTPChallengeRoundTrip`,
-`TestPostgresAccountUpsertIsStable` — bật bằng `TEST_DATABASE_URL`. Đã chạy thật qua HTTP:
-`POST /v1/drivers/register` → 201, `POST /v1/trips` → 201, chuyến đi trọn tới `PAID`.
-
-<details><summary>Bối cảnh gốc</summary>
-
-**Bằng chứng** — `idRepo := identity.NewMemoryRepo()` nằm **ngoài** khối `if cfg.InMemory()`,
-không có nhánh Postgres như `driver`/`trip`.
-
-**Chuỗi hậu quả:**
-```
-identity.MemoryRepo  →  bảng `accounts` không bao giờ được INSERT
-                     →  drivers.account_id  REFERENCES accounts(id)  ✗ FK
-                     →  trips.rider_id      REFERENCES accounts(id)  ✗ FK
-                     →  POST /v1/drivers/register  → 409 driver_create_failed
-                     →  POST /v1/trips              → 500 db_error
-```
-
-> Spec §8.0 mô tả đúng vấn đề này, nhưng **chỉ nêu `drivers`**. Thực tế `trips.rider_id` cũng
-> là khoá ngoại tới `accounts` → **cả luồng khách lẫn luồng tài xế đều hỏng**, không chỉ đăng ký tài xế.
-
-Redis vẫn hợp hơn cho OTP challenge (TTL 5 phút, ghi/xoá liên tục); bảng `otp_challenges`
-là đường dự phòng cho môi trường chưa có Redis — sẽ thay ở [T-21](07-todo.md#t-21). → [T-01](07-todo.md#t-01)
-
-</details>
-
-<a id="g-02"></a>
-#### G-02 · Sổ cái chỉ có bản bộ nhớ — restart là mất sạch tiền
-
-**Bằng chứng** — [`app.go:96`](../godrive/internal/app/app.go#L100): `wallet.NewMemoryLedger()`, không điều kiện.
-Không tồn tại file `internal/wallet/store_postgres.go`.
-
-Bảng `ledger_entries` + `ledger_transactions` đã có DDL đầy đủ, index đầy đủ — **không một dòng Go nào chạm vào**.
-
-> Rủi ro số 1 trong spec §10 là *"đối soát tiền mặt — sai một đồng cũng mất niềm tin tài xế"*.
-> Ở trạng thái hiện tại, một lần `kubectl rollout restart` xoá toàn bộ công nợ của mọi tài xế.
-
-→ [T-02](07-todo.md#t-02)
-
-</details>
-
-<a id="g-03"></a>
-#### G-03 · ✅ ĐÃ ĐÓNG (GĐ 1) · Cổng chặn nợ không hoạt động
-
-**Đã sửa — hai lớp, có chủ đích:**
-
-1. **Đọc số dư THẬT từ sổ cái** ở cả hai điểm quyết định: `matching.candidates()` (qua `matching.WalletPort`)
-   và `driver.Reserve()` (qua `driver.BalanceReader`). Cả hai đều là Port do bên tiêu thụ khai báo —
-   `matching` và `driver` không import `wallet`.
-   Kiểm hai lần là cố ý: giữa lúc gửi lời mời và lúc tài xế bấm nhận, số dư có thể đã đổi.
-2. **Đồng bộ cột cache** `drivers.wallet_balance` qua sự kiện mới `wallet.balance_changed`, để bảng
-   điều khiển hiển thị đúng. `UpdateWalletBalance` **cố ý không tăng `version`**: version bảo vệ
-   chuyển trạng thái, còn số dư là giá trị suy ra — tăng version ở đây sẽ làm hỏng CAS của
-   `Reserve`/`SetStatus` đang chạy song song.
-
-**Verify:** `TestCashDebtBlocksDriverEndToEnd` — 21 chuyến tiền mặt → nợ 210.000đ → `Reserve` trả
-`wallet_debt_exceeded` → `DispatchRound` gửi **0** lời mời → nạp 300k → nhận lại được ngay.
-Qua HTTP thật: 36 chuyến → `in_debt=true`, `amount_to_clear=1.600đ`, bảng điều khiển hiện đúng lý do chặn.
-
-<details><summary>Bối cảnh gốc</summary>
-
-**Bằng chứng** — không có một phép gán `WalletBalance` nào ngoài file test và SQL scan/insert:
-
-| Nơi | Vai trò |
-|---|---|
-| `SettleCashTrip` ghi `DRIVER_WALLET −fee` | vào **`ledger_entries`** |
-| `CanAcceptTrip` đọc `d.WalletBalance` | từ **cột cache `drivers.wallet_balance`** |
-| Cầu nối giữa hai chỗ | **không tồn tại** |
-
-**Hệ quả:** `wallet_balance` vĩnh viễn = 0 → `wallet_debt_exceeded` **không bao giờ được trả về**
-trong luồng thật → tài xế nợ bao nhiêu cũng nhận chuyến tiếp.
-
-Spec §4.2 gọi đây là *"mô hình bắt buộc từ Phase 1, không phải tính năng phụ"* — hiện nó **chưa hoạt động**.
-
-→ [T-03](07-todo.md#t-03)
-
-</details>
-
-<a id="g-04"></a>
-#### G-04 · Chỉ số tài xế đóng băng → 3/5 thành phần chấm điểm là hằng số
-
-**Bằng chứng** — không có code nào ghi `CompletedTrips`, `AcceptanceRate`, `Rating`, `CancelRate`
-sau `Onboard`. Mọi tài xế vĩnh viễn `Rating = 5.0`, `AcceptanceRate = 0.8`.
-
-Thay vào công thức chấm điểm:
-
-```
-điểm = 1.0 × ETA
-     + 60.0 × (5 − 5.0)     = 0        ← hằng số
-     + 90.0 × (1 − 0.8)     = 18       ← hằng số, cộng vào MỌI ứng viên
-     − 0.25 × idle_giây                 ← xem G-10, ngữ nghĩa sai
-     + 0.20 × góc_lệch
-```
-
-⇒ Thực tế **chấm điểm ≈ chỉ theo ETA và góc lệch hướng.** Toàn bộ lý lẽ *"tài xế gần nhưng hay bỏ chuyến
-làm khách chờ lâu hơn tài xế xa mà luôn nhận"* (spec §3.2) hiện **không có tác dụng**.
-
-**Cần:** subscriber `trip.completed` / `trip.cancelled` / `offer.created` + `offer.accepted`
-cập nhật thống kê tài xế (trung bình trượt). → [T-04](07-todo.md#t-04)
-
-<a id="g-09"></a>
-#### G-09 · ✅ ĐÃ ĐÓNG (GĐ 1) · Ba phép float trên đường đi của tiền
-
-> ### ⚠️ Đính chính phân tích ban đầu
->
-> Bản đối chiếu đầu tiên kết luận *"`RoundTo(1000)` che mất sai số ở giá khách trả"*.
-> **Kết luận đó SAI.** Khi viết test hồi quy tôi quét toàn dải và đo được:
->
-> | Đo được | Kết quả |
-> |---|---|
-> | `computeBase` cho kết quả khác nhau | **29.199 / 38.001 cự ly (77%)** |
-> | **Tổng cước KHÁCH PHẢI TRẢ khác nhau** | **422 / 190.005 tổ hợp** (cự ly × surge) |
-> | Mức lệch mỗi lần | **1.000đ** |
->
-> Sai lệch vài đồng ở `computeBase` **không** bị làm tròn nuốt mất — khi nó vắt qua ranh giới
-> `RoundTo(1000)` thì giá cuối lệch nguyên một nghìn. Ví dụ cự ly 2.649m: số nguyên cho base 17.001
-> → **18.000đ**, float cho 16.997 → **17.000đ**.
->
-> Đây không phải vi phạm nguyên tắc suông mà là **tính sai tiền của khách**. Mức ưu tiên P0 của mục
-> này lẽ ra phải được lập luận bằng con số này ngay từ đầu.
-
-**Đã sửa:**
-- Thêm `money.MulDiv(num, den)` — phép nguyên thuỷ nhân/chia có làm tròn nửa ra xa số 0,
-  hoàn toàn bằng số nguyên. `MulPermille` nay là `MulDiv(rate, 1000)`.
-- `computeBase` quy quãng đường/thời lượng về số nguyên (mét, giây) **ngay lập tức**, rồi tính bằng `MulDiv`.
-- `SurgeProvider` đổi chữ ký: trả **`int64` permille** (1000 = ×1.0) thay vì `float64`.
-  `DemandSurge` so sánh bậc thang bằng số nguyên (`demand×10` với `supply×ngưỡng×10`) — tránh cả phép
-  chia float lẫn việc 1.2 không biểu diễn chính xác được ở nhị phân.
-- `Quote.SurgeMult float64` giữ lại nhưng **chỉ để hiển thị**; `Quote.SurgePermille` là nguồn sự thật.
-
-**Verify:** `TestComputeBaseKnownTruncationCases`, `TestFloatDriftChangesFareByAThousand` (4 ca hồi quy
-với giá kỳ vọng chính xác), `TestComputeBaseRoundsHalfUpNotTruncate`, `TestSurgeMultiplyIsExact`.
-Kiểm ngược: khôi phục bản float thì **3 test fail**.
-
-<details><summary>Bối cảnh gốc</summary>
-
-Spec §0 quy tắc 6: *"Tiền là `money.VND` (int64 đồng). **Không dùng float cho tiền — kể cả biến tạm.**"*
-
-| Vị trí | Mã |
-|---|---|
-| [`pricing/service.go:135`](../godrive/internal/pricing/service.go#L135) | `fare += money.VND(extra / 1000 * float64(t.PerKm))` |
-| [`pricing/service.go:137`](../godrive/internal/pricing/service.go#L137) | `fare += money.VND(r.DurationS / 60 * float64(t.PerMinute))` |
-| [`pricing/service.go:77`](../godrive/internal/pricing/service.go#L77) | `subtotal := money.VND(float64(base+night) * mult)` |
-
-**Đo được, không phải lo xa.** Quét mọi `base` từ 10.000 đến 400.000 (bước 100đ):
-
-| `surge` | Số giá trị lệch so với số nguyên | Lệch |
-|---|---:|---|
-| 1.2 | 0 / 3.901 | — |
-| **1.4** | **923 / 3.901 (24%)** | **−1đ** |
-| 1.7 | 0 / 3.901 | — |
-| 2.0 | 0 / 3.901 | — |
-
-Ví dụ: `base = 10.300`, `× 1.4` → float cho `14.419`, số nguyên đúng là `14.420`.
-
-*(Phần này của bản gốc cho rằng `RoundTo(1000)` che mất sai số — xem đính chính ở đầu mục.)*
-
-→ [T-09](07-todo.md#t-09)
-
-</details>
-
----
-
-### 🔴 P1 — chặn vận hành thật
-
-<a id="g-05"></a>
-#### G-05 · ✅ ĐÃ ĐÓNG (GĐ 1) · Phí huỷ chuyến không bao giờ được ghi sổ
-
-**Đã sửa:** `wallet.Service.PostCancelFee` (idempotent theo `tx_cancel_<tripID>`) + consumer
-`app.onTripCancelled` vừa ghi sổ phí huỷ vừa trả tài xế về `IDLE`.
-`trip.Service.Cancel` nay tính `cancelFee` **một lần** rồi dùng lại cho cả nhật ký lẫn sự kiện.
-
-**Verify:** `TestLateCancelCreditsDriver` (tài xế +10.000đ, khách −10.000đ, tài xế về `IDLE`) và
-`TestEarlyCancelIsFree` (huỷ trong cửa sổ 2 phút → không ai bị ghi sổ). Cả hai dùng đồng hồ tiêm vào.
-
-<details><summary>Bối cảnh gốc</summary>
-
-Spec §4.4: *"Quá cửa sổ → `CancelFeeVND` (10.000đ) **ghi có cho tài xế qua `wallet.CancelFee`**"*.
-
-Thực tế:
-- `trip.Service.cancelFee()` tính đúng, đưa vào `Event.Meta` và payload `trip.cancelled` ✅
-- `wallet.CancelFee(...)` là hàm constructor Transaction đã viết xong ✅
-- **Không có ai gọi nó.** `app.StartWorkers` chỉ đăng ký `setDriverStatus(IDLE)` cho `trip.cancelled` ❌
-
-⇒ Tài xế bị huỷ chuyến trễ **không nhận được một đồng đền bù nào**, dù giao diện đã hứa.
-
-**Phụ:** `cancelFee(t)` được gọi **hai lần**; nếu đồng hồ nhích qua ranh giới 2 phút giữa hai lần gọi
-thì `trip_events.meta` và sự kiện sẽ mâu thuẫn — đúng loại sai lệch không thể giải thích được khi tài
-xế khiếu nại. → [T-05](07-todo.md#t-05)
-
-</details>
-
-<a id="g-06"></a>
-#### G-06 · Outbox đã viết xong nhưng chưa nối — sự kiện là **at-most-once**
-
-**Bằng chứng:**
-- `internal/outbox` chỉ được import ở **một chỗ**: [`cmd/worker/main.go:13`](../godrive/cmd/worker/main.go#L13)
-- Chỗ đó tạo `outbox.NewMemoryStore()` **mới toanh** rồi đưa cho relay — **không ai Enqueue vào store đó**
-- Không module nghiệp vụ nào import `outbox`
-
-⇒ Relay chạy mỗi giây, đọc rỗng, không làm gì. Trong khi đó `eventbus.inMemory.Publish` spawn goroutine
-và **chỉ log lỗi handler rồi bỏ qua** ([bus.go:81](../godrive/internal/platform/eventbus/bus.go#L84)).
-
-**Rủi ro cụ thể:** một lần `wallet.SettleTrip` lỗi trong `onTripCompleted` ⇒ chuyến đó **không bao giờ được ghi sổ**,
-và không có gì phát hiện ra. Spec §6 nói *"Outbox — sự kiện ghi cùng transaction nghiệp vụ"* — chưa thực hiện. → [T-06](07-todo.md#t-06)
-
-<a id="g-07"></a>
-#### G-07 · Surge vĩnh viễn = 1.0
-
-`DemandSurge.RecordRequest` ([surge.go:30](../godrive/internal/pricing/surge.go#L30)) **không có ai gọi**
-(`grep -rn "RecordRequest"` chỉ ra định nghĩa).
-
-⇒ `demand` luôn rỗng ⇒ `ratio = 0` ⇒ nhánh `default` ⇒ **`1.0`**.
-
-Toàn bộ bậc thang surge (§3.4 của spec), việc clamp hai lần, và AC *"surge không bao giờ vượt 2.0"*
-đều đang mô tả một đường đi **chưa bao giờ được thực thi**.
-
-**Cần:** gọi `RecordRequest(pickup, now)` trong `Estimate()` (hoặc subscribe `trip.requested` —
-đo *nhu cầu thật* thay vì *lượt xem giá*, cần chọn có chủ đích). → [T-07](07-todo.md#t-07)
-
-<a id="g-10"></a>
-#### G-10 · `IdleSeconds` đo nhầm thứ — đang **thưởng cho ping cũ**
-
-```go
-// internal/matching/engine.go:234
-IdleSeconds: now.Sub(s.UpdatedAt).Seconds(),   // s = location.Snapshot
-```
-
-`Snapshot.UpdatedAt` là **thời điểm ping cuối**, không phải thời điểm tài xế bắt đầu rảnh.
-Kết hợp với `s -= cfg.WeightIdle * c.IdleSeconds` (trừ điểm phạt):
-
-> **Tài xế gửi ping thưa hơn / mạng kém hơn được ưu tiên cao hơn.**
-
-Bị chặn trên bởi `StaleAfter = 45s`, nên chênh lệch tối đa chỉ `0.25 × 45 ≈ 11 điểm` — nhỏ so với
-`WeightAcceptance = 90`. Nhưng vì [G-04](#g-04) làm 3/5 thành phần thành hằng số, **11 điểm này lại
-đủ sức đảo thứ tự** giữa hai ứng viên có ETA chênh dưới 11 giây.
-
-Spec §3.2 mô tả ý định đúng (*"chờ lâu được ưu tiên — phân bổ thu nhập đều hơn, yếu tố giữ chân tài xế
-quan trọng ở VN"*) nhưng code đo sai đại lượng.
-
-**Cần:** thêm `driver.IdleSince` (đặt khi vào `IDLE`) và tính `IdleSeconds = now − IdleSince`. → [T-10](07-todo.md#t-10)
-
-<a id="g-11"></a>
-#### G-11 · Không có push — tài xế phải poll để biết có chuyến
-
-`offer.created` được publish nhưng **không ai subscribe**. `notification.Pusher` / `LogPusher`
-đã định nghĩa nhưng **không được import ở đâu cả** ngoài chính package đó.
-
-⇒ Ứng dụng tài xế phải gọi `GET /v1/offers` liên tục. Với `OfferTTL = 15s`, muốn không bỏ lỡ
-thì phải poll ~3–5 giây/lần — đúng thứ mà spec §9 đã chọn MQTT để tránh
-(*"Android giá rẻ, 4G chập chờn, tiết kiệm pin và băng thông"*). → [T-11](07-todo.md#t-11)
-
-<a id="g-12"></a>
-#### G-12 · ✅ ĐÃ ĐÓNG (GĐ 1) · Tài xế không có cách nào xem ví hay trả nợ
-
-**Đã sửa:** [`wallet/http.go`](../godrive/internal/wallet/http.go) —
-`GET /v1/drivers/me/wallet` (số dư, tiền mặt đang cầm, hạn mức, `in_debt`, **`amount_to_clear`**:
-nạp đúng chừng này là nhận chuyến lại được) và `GET /v1/drivers/me/statement` (mặc định 30 ngày, trần 92 ngày).
-
-> **`POST /v1/drivers/me/topup` CHỈ đăng ký khi `DEV_AUTH=true`.** Một endpoint tự ghi có vào ví mà
-> không có đối ứng tiền thật chính là máy in tiền. Ở production, tiền vào ví chỉ đến từ webhook cổng
-> thanh toán đã xác thực chữ ký ([T-22](07-todo.md#t-22)). Đây là quyết định có chủ đích, không phải thiếu sót.
-
-**Verify:** kịch bản HTTP thật — xem ví, nạp 500k ba lần cùng `Idempotency-Key` (chỉ cộng một lần),
-sao kê trả 73 bút toán `{TRIP: 72, TOPUP: 1}`.
-
-<details><summary>Bối cảnh gốc</summary>
-
-`internal/wallet` **không có file `http.go`**. Service đã có `DriverBalance`, `CashOnHand`,
-`Statement`, `TopUp` — chỉ `admin` gọi được, tài xế thì không.
-
-⇒ Mô hình công nợ tiền mặt (trụ cột của spec) **không có giao diện người dùng ở phía tài xế**. → [T-12](07-todo.md#t-12)
-
-</details>
-
-<a id="g-13"></a>
-#### G-13 · ✅ ĐÃ ĐÓNG (GĐ 1) · Không có nhật ký thao tác admin
-
-**Đã sửa:** bảng `admin_audit_log` (migration `0003`, chỉ thêm mới) + `admin.AuditLog` với bản bộ nhớ
-và bản Postgres + `GET /v1/admin/audit?actor=&target_type=&target_id=`.
-
-`ReviewKYC` nay nhận `admin.Actor` (lấy từ token) và ghi lại **cả trạng thái trước lẫn sau**.
-Ghi nhật ký lỗi thì trả lỗi luôn: một thay đổi hồ sơ không truy vết được còn tệ hơn một lần duyệt
-thất bại, vì nó âm thầm phá bất biến *"mọi thao tác quản trị đều có dấu vết"*.
-
-Interface `AuditLog` **không có phương thức sửa hay xoá** — bất biến "chỉ thêm mới" nằm ngay trong
-hình dạng của nó, không phải chỉ trong quy ước.
-
-**Verify:** `TestAdminReviewKYCChangesState` (bộ nhớ), `TestPostgresAuditLogRecordsKYCReview`
-(Postgres, hai lần duyệt → 2 dòng, mới nhất lên đầu). Qua HTTP: `GET /v1/admin/audit` trả
-`review_kyc`, actor, `PENDING→APPROVED`.
-
-<details><summary>Bối cảnh gốc</summary>
-
-`ReviewKYC` là hành động ghi duy nhất của module `admin` — và **không để lại dấu vết nào**:
-không biết ai duyệt, lúc nào, duyệt hồ sơ nào, lý do gì.
-
-Spec §5c đã đánh dấu *"chưa làm, cần cho đối soát nội bộ"*. → [T-13](07-todo.md#t-13)
-
-</details>
-
-<a id="g-14"></a>
-#### G-14 · ✅ ĐÃ ĐÓNG (GĐ 0) · Goroutine dispatch không có `recover()`
-
-**Đã sửa:** thêm [`platform/safego`](../godrive/internal/platform/safego/safego.go).
-`workers.go` bọc goroutine dispatch bằng `safego.Recover` với cleanup đẩy chuyến về `EXPIRED`
-(nếu không nó kẹt `SEARCHING` vĩnh viễn chờ một dispatcher đã chết); `eventbus` bọc goroutine handler.
-`Recover` tự phòng cả trường hợp cleanup panic lần hai.
-
-**Verify:** `TestDispatchPanicDoesNotKillProcess` + `TestEventHandlerPanicIsContained`.
-Đã kiểm ngược: bỏ `recover` ra thì test **fail** — cả binary test chết vì panic, đúng như triệu chứng thật.
-
-<details><summary>Bối cảnh gốc</summary>
-
-
-```go
-// internal/app/workers.go:33
-go func() {
-    if err := a.Matcher.Dispatch(root, p.TripID); err != nil { … }
-}()
-```
-
-`httpx.Recover()` chỉ bảo vệ **handler HTTP**. Panic trong goroutine này (nil pointer từ một
-implementation `Port` mới, chia cho 0 trong scoring…) **giết cả tiến trình** — kéo theo toàn bộ
-state in-memory: sổ cái, offer, chỉ mục vị trí, idempotency key.
-
-Điều tương tự áp dụng cho goroutine handler trong `eventbus.inMemory.Publish`. → [T-14](07-todo.md#t-14)
-
-</details>
-
----
-
-### 🟡 P2 — nợ kỹ thuật
-
-| Mã | Vấn đề | Vị trí |
+## 5.3 Danh mục gap — trạng thái sau GĐ 0–2
+
+Chi tiết chẩn đoán từng gap giữ nguyên trong lịch sử git của tài liệu này; bảng dưới là trạng thái hiện tại.
+
+### ✅ Đã đóng (20)
+
+| Gap | Nội dung | Sửa thế nào | Kiểm chứng |
+|---|---|---|---|
+| <a id="g-01"></a>**G-01** | `identity` không có repo Postgres ⇒ cả đăng ký tài xế lẫn đặt chuyến hỏng | `identity.PostgresRepo` + bảng `otp_challenges` + job dọn | `TestPostgresFullTripLifecycle`, `TestPostgresOTPChallengeRoundTrip` |
+| <a id="g-02"></a>**G-02** | Sổ cái chỉ có bản bộ nhớ — restart là mất sạch tiền | `wallet.PostgresLedger`; idempotency chốt bằng PK `ledger_transactions` | `TestPostgresLedgerSurvivesRestart` |
+| <a id="g-03"></a>**G-03** | `WalletBalance` không ai cập nhật ⇒ cổng chặn nợ chưa từng kích hoạt | `matching` và `driver.Reserve` đọc **thẳng sổ cái**; cột cache đồng bộ qua `wallet.balance_changed` | `TestCashDebtBlocksDriverEndToEnd` |
+| <a id="g-04"></a>**G-04** | Chỉ số tài xế đóng băng ⇒ 3/5 thành phần chấm điểm là hằng số | Lưu **số đếm** thay vì tỉ lệ; consumer sự kiện cộng dồn; làm mượt Bayes | `TestPoorAcceptanceRateSinksDriverInRanking` |
+| <a id="g-05"></a>**G-05** | Phí huỷ được tính nhưng không ai ghi sổ | `wallet.PostCancelFee` + consumer `trip.cancelled`; tính phí **một lần** | `TestLateCancelCreditsDriver`, `TestEarlyCancelIsFree` |
+| <a id="g-06"></a>**G-06** | Outbox viết xong nhưng chưa nối ⇒ sự kiện **at-most-once** | `outbox.PostgresStore`; `trip.Save` ghi outbox **cùng transaction**; relay có DLQ | `TestPostgresOutboxDeliversEventsAtLeastOnce` |
+| <a id="g-07"></a>**G-07** | Surge vĩnh viễn 1.0 vì `RecordRequest` không ai gọi | Nối vào `trip.requested` (**cầu thật**, không phải lượt xem giá) | `TestSurgeRisesWithRealDemand` |
+| <a id="g-08"></a>**G-08** | Giấy tờ tài xế ghi thiếu và không đọc lại được | Bổ sung cột `insurance_*`; `scan()` đọc đủ; validate định dạng ngày | `TestPostgresFullTripLifecycle` |
+| <a id="g-09"></a>**G-09** | Ba phép float trên đường đi của tiền | `money.MulDiv`; surge chuyển sang **permille (int64)** | 3 test riêng (xem §5.2) |
+| <a id="g-10"></a>**G-10** | `IdleSeconds` đo độ cũ của ping ⇒ **thưởng cho tài xế mạng kém** | Thêm `drivers.idle_since`, đặt/xoá ngay trong câu CAS đổi trạng thái | `TestIdleSecondsMeasuresIdleNotPingAge` |
+| <a id="g-12"></a>**G-12** | Tài xế không có cách nào xem ví hay trả nợ | `GET /wallet`, `GET /statement`, `POST /topup` (**chỉ dev**) | e2e HTTP |
+| <a id="g-13"></a>**G-13** | Không có nhật ký thao tác admin | Bảng `admin_audit_log` (chỉ thêm mới) + `GET /v1/admin/audit` | `TestPostgresAuditLogRecordsKYCReview` |
+| <a id="g-14"></a>**G-14** | Goroutine dispatch không có `recover` ⇒ panic giết cả tiến trình | `platform/safego`; cleanup đẩy chuyến về `EXPIRED` | `TestDispatchPanicDoesNotKillProcess` |
+| <a id="g-15"></a>**G-15** | Rate limit không bao giờ dọn bucket | Quét định kỳ + clock tiêm được | `TestRateLimitSweepsIdleBuckets` |
+| <a id="g-16"></a>**G-16** | `MemoryRepo.Save` không tăng `Version` như bản Postgres | Đồng bộ hành vi hai repo | test hiện có |
+| <a id="g-17"></a>**G-17** | `location` dùng `time.Now()` thay clock tiêm được | Tiêm `clock.Clock`; đồng thời gán cờ `SPEED_OUTLIER` vốn là hằng số chết | `TestStaleDriverDropsOutOfIndex` |
+| <a id="g-19"></a>**G-19** | `matching` không có repo Postgres ⇒ unique index chưa bảo vệ gì | `matching.PostgresStore` + bảng `trip_claims` | `TestPostgresOfferUniqueIndexBlocksDoubleAccept` |
+| <a id="g-23"></a>**G-23** | Trường chết trong `pricing` | `SurgePermille` thay `SurgeMult` trên đường tiền | — |
+| <a id="g-24"></a>**G-24** | `ActiveByDriver` khai báo và cài đặt nhưng không ai gọi | Dùng cho đường thoát trạng thái kẹt của tài xế | `TestStuckDriverCanRecoverByGoingOnline` |
+| **AC §5c** | Nhật ký thao tác admin | như G-13 | — |
+
+<a id="con-lai"></a>
+### 🟡 Còn lại (6) — chủ yếu là thay hạ tầng
+
+| Gap | Nội dung | Vì sao chưa làm |
 |---|---|---|
-| <a id="g-08"></a>**G-08** | `driver.PostgresRepo` **không lưu và không đọc lại `Documents`**. `Create` chỉ ghi `national_id`, `driver_license`, `vehicle_reg_no`; **bỏ hẳn** `insurance_no`, `insurance_until`. `scan()` không đọc cột nào ⇒ `Get()` luôn trả `Documents{}` rỗng ⇒ **admin duyệt KYC mà không xem được giấy tờ** | [`driver/store_postgres.go:26-52`](../godrive/internal/driver/store_postgres.go#L67) |
-| <a id="g-15"></a>**G-15** | Rate limit **không bao giờ dọn bucket** → map lớn dần theo số IP đã từng gọi. Rò rỉ bộ nhớ chậm nhưng chắc | [`httpx/middleware.go:120`](../godrive/internal/platform/httpx/middleware.go#L98) |
-| <a id="g-16"></a>**G-16** | `trip.MemoryRepo.Save` **không** tăng `t.Version` của caller, `PostgresRepo.Save` **có** (`t.Version++`). Hai repo lệch hành vi ⇒ code chạy đúng in-memory có thể fail ở Postgres | [`trip/store_memory.go:43`](../godrive/internal/trip/store_memory.go#L45) |
-| <a id="g-17"></a>**G-17** | `location.MemoryIndex.Nearby` và `FraudDetector` dùng `time.Now()` thay `clock.Clock` tiêm được ⇒ không viết được test tất định cho lọc độ tươi và cửa sổ cờ gian lận. Vi phạm spec §6 | [`index_memory.go:83`](../godrive/internal/location/index_memory.go#L73), [`fraud.go:38`](../godrive/internal/location/fraud.go#L45) |
-| <a id="g-18"></a>**G-18** | `SUSPENDED` chỉ được **đọc** ở 4 chỗ, **không có code path nào đặt nó**. Phát hiện gian lận (`FraudDetector`) không dẫn tới hành động nào | `grep StatusSuspended` |
-| <a id="g-19"></a>**G-19** | `admin.ListDrivers`/`ListTrips` với "tất cả" = lặp qua từng trạng thái, mỗi lần `LIMIT n`, rồi hợp lại và cắt. Khi dữ liệu lớn kết quả sẽ **thiếu**. Cần phân trang keyset | [`admin/service.go:88`](../godrive/internal/admin/service.go#L72) |
-| <a id="g-20"></a>**G-20** | `matching.candidates()` gọi `drivers.Get()` cho **từng** ứng viên (N+1). In-memory không sao; lên Postgres với `BatchSize` lớn sẽ thành điểm nghẽn | [`matching/engine.go:210`](../godrive/internal/matching/engine.go#L201) |
-| <a id="g-21"></a>**G-21** | JWT không có `jti`, không có refresh token, không thu hồi được. Đăng xuất chỉ xoá cookie — token vẫn hợp lệ tới 24h. Tài xế bị khoá vẫn dùng token cũ được | `platform/authn` |
-| <a id="g-22"></a>**G-22** | `identity.RequestOTP` **không giới hạn theo số điện thoại** — chỉ có rate limit theo IP. Đổi IP là spam được tin nhắn tốn tiền thật | `identity/service.go` |
-| <a id="g-23"></a>**G-23** | `Quote.Discount` và `EstimateInput.PromoCode` khai báo nhưng không bao giờ được dùng. `POST /v1/quotes` nhận `vehicle_type` rồi **bỏ qua** (luôn gọi `EstimateAll`) | `pricing` |
-| <a id="g-24"></a>**G-24** | `trip.Repository.ActiveByDriver` đã khai báo + cài đặt ở **cả hai** repo, **không ai gọi** | `trip` |
-| <a id="g-25"></a>**G-25** | Không có metric (Prometheus), không có tracing, không có `/readyz`. `/healthz` không kiểm tra kết nối DB | `platform` |
-| <a id="g-26"></a>**G-26** | `drivers.national_id` / `driver_license` / `vehicle_reg_no` lưu **plaintext** trong CSDL. Migration đã ghi chú *"cân nhắc mã hoá ở tầng ứng dụng"* — chưa làm. NĐ 13/2023 | `migrations` |
-| <a id="g-27"></a>**G-27** | *(mới, phát hiện khi chạy thật ở GĐ 0)* `CanAcceptTrip` trả `driver_busy` với thông báo **"Bạn đang trong một chuyến khác."** cho **mọi** trạng thái khác `IDLE` — kể cả `OFFLINE`. Bảng điều khiển vì thế hiển thị "đang trong một chuyến khác" cho tài xế chỉ đơn giản là chưa bật app. Cần tách mã riêng cho `OFFLINE` | [`driver/domain.go`](../godrive/internal/driver/domain.go) |
+| <a id="g-11"></a>**G-11** | Không có push; tài xế phải poll `GET /v1/offers` | Cần FCM/APNs + MQTT (EMQX) — **GĐ 3** |
+| <a id="g-18"></a>**G-18** | `SUSPENDED` chỉ được đọc, không có đường nào đặt nó | Cần chính sách ngưỡng gian lận — **GĐ 4**, và là quyết định vận hành chứ không phải kỹ thuật |
+| <a id="g-20"></a>**G-20** | `candidates()` gọi `drivers.Get()` cho từng ứng viên (N+1) | Đi cùng OSRM `/table` — **GĐ 3** |
+| <a id="g-21"></a>**G-21** | JWT không thu hồi được; đăng xuất chỉ xoá cookie | Cần refresh token + danh sách chặn Redis — **GĐ 4** |
+| <a id="g-22"></a>**G-22** | Rate limit OTP theo IP, chưa theo số điện thoại | Cần Redis để giới hạn toàn cụm — **GĐ 3** |
+| <a id="g-25"></a>**G-25** | Không metric, không tracing, `/healthz` không kiểm DB | **GĐ 3** |
+| <a id="g-26"></a>**G-26** | CCCD/GPLX lưu plaintext | Cần quyết định về quản lý khoá — **GĐ 4** |
 
----
+| <a id="g-27"></a>**G-27** | Mã lỗi `driver_busy` dùng chung cho cả tài xế OFFLINE lẫn tài xế đang chở khách | Chỉ là thông báo gây hiểu nhầm ở bảng điều khiển — **T-28**, `P2` |
+
+> **G-19 lưu ý:** ba store còn ở bộ nhớ (`location.index`, `pricing.quotes`, `idem.keys`) vẫn khiến
+> hệ thống **chỉ chạy đúng với một bản sao**. `app.New()` log cảnh báo nêu đích danh chúng lúc khởi động.
 
 ---
 
 <a id="loi-moi"></a>
-## 5.6 Lỗi mới phát hiện trong lúc kiểm thử GĐ 1
+## 5.4 Lỗi mới phát hiện trong lúc kiểm thử
 
-Năm lỗi dưới đây **không nằm trong bản đối chiếu ban đầu**. Chúng lộ ra khi viết test đồng thời và
+Sáu lỗi dưới đây **không nằm trong bản đối chiếu ban đầu**. Chúng lộ ra khi viết test đồng thời và
 test biên — đúng loại lỗi mà đọc code không thấy được. Tất cả đã sửa.
+
+**Bốn trong sáu là cuộc đua hoặc lỗi thứ tự.** Đây là lý do thực tế để chạy `go test -race -count=N`
+chứ không chỉ `go test`: hai lỗi nghiêm trọng nhất (G-33, G-34) chỉ xuất hiện ở một phần nhỏ số lần chạy.
 
 <a id="g-28"></a>
 ### G-28 · ✅ Khoá idempotency kẹt 24 giờ sau một lần thất bại · **nghiêm trọng**
@@ -538,28 +216,116 @@ lại nằm lại vĩnh viễn. Với TTL 24 giờ và **mỗi chuyến một kh
 
 **Sửa:** quét định kỳ (tối đa 1 phút/lần) giống `httpx.RateLimit`.
 
+<a id="g-33"></a>
+### G-33 · ✅ Tài xế kẹt vĩnh viễn ở `ON_TRIP` sau ~10% số chuyến · **nghiêm trọng**
+
+Trạng thái tài xế được suy từ **sự kiện nào vừa tới**, mà bus phát bất đồng bộ — mỗi handler một
+goroutine, không bảo đảm thứ tự:
+
+```
+Trình tự publish:  trip.started  →  trip.completed
+Trình tự chạy:     handler(completed) đặt IDLE
+                   handler(started)   đặt ON_TRIP     ← tới sau, ghi đè
+Kết quả:           tài xế ON_TRIP nhưng không có chuyến nào
+```
+
+Tài xế đó **không nhận được lời mời nào nữa**, và **không có một dòng log lỗi nào** được ghi.
+Đo bằng `TestDriverStatusAfterBackToBackStartComplete`: **2/20 lần** (~10%).
+
+Ở production, khoảng cách giữa `start` và `complete` là hàng chục phút nên tỉ lệ thấp hơn nhiều —
+nhưng hậu quả thì y hệt, và càng khó phát hiện vì hiếm.
+
+**Sửa hai lớp:**
+1. `app.syncDriverStatus` đọc **trạng thái hiện tại của chuyến** rồi mới đặt trạng thái tài xế.
+   Phép gán trở nên **hội tụ**: sự kiện đến muộn cũng chỉ đặt lại đúng giá trị đang cần.
+2. `GoOnline` cho phép tài xế **tự thoát** khi thực tế không còn chuyến nào chạy — dùng
+   `trip.ActiveByDriver`, phương thức đã cài đặt từ đầu mà chưa ai gọi ([G-24](#)).
+   Không có lối này, cách duy nhất để họ làm việc lại là gọi tổng đài nhờ sửa tay trong CSDL.
+
+<a id="g-34"></a>
+### G-34 · ✅ Dùng sai `sync.WaitGroup` trong event bus — tắt êm có thể mất sự kiện
+
+`Publish` gọi `wg.Add(1)` **ngoài khoá**, trong khi `Close` gọi `wg.Wait()`. Đây đúng là trường hợp
+tài liệu chuẩn của Go cảnh báo: *một `Add` làm bộ đếm từ 0 đi lên mà chạy song song với `Wait` thì
+`Wait` có thể trả về sớm.*
+
+Hệ quả thật: **tắt êm báo "đã dừng" trong khi sự kiện vẫn đang được xếp lịch** — và những sự kiện
+đó biến mất không dấu vết. Với `trip.completed` thì đó là một chuyến không được ghi sổ.
+
+**Sửa:** `wg.Add` nằm trong khoá cùng với việc kiểm cờ `closed`. Khi đang tắt, `Publish` **chạy
+handler đồng bộ** thay vì spawn goroutine.
+
+> Lần sửa đầu tôi cho `Publish` **trả lỗi** khi bus đã đóng. Cách đó tạo lỗi mới: handler hoàn toàn
+> có thể tự publish tiếp (ghi sổ xong thì báo số dư đổi), và từ chối những sự kiện đó khiến chính
+> handler đang chạy trả lỗi rồi **bỏ dở phần việc còn lại**. Chạy đồng bộ giữ được ngữ nghĩa "giao đủ"
+> mà vẫn không đụng tới `WaitGroup`.
+
+**Sửa kèm:** `wallet.SettleTrip` từng trả lỗi của bước *phát thông báo* như thể là lỗi *ghi sổ*.
+Tiền đã vào sổ rồi thì người gọi không được hiểu là thất bại và bỏ dở các bước sau.
+
 ---
 
-## 5.4 Chỗ **tài liệu spec** đã lệch khỏi code (cần sửa spec)
+## 5.5 Chỗ **tài liệu spec** đã lệch khỏi code (cần sửa spec)
 
 | Spec nói | Code thật | Sửa ở đâu |
 |---|---|---|
-| *"~5.650 dòng / 61 files"* | **5.961 dòng mã (không tính test) / 67 file `.go`** | §header |
-| *"pass toàn bộ **24** test"* | **77 test** (29 khi đối chiếu lần đầu; GĐ 0 thêm 14; GĐ 1 thêm 34) | §11 |
+| *"~5.650 dòng / 61 files"* | **8.076 dòng mã (không tính test) / 84 file `.go`** | §header |
+| *"pass toàn bộ **24** test"* | **84 test in-memory / 93 test có Postgres** (29 khi đối chiếu lần đầu) | §11 |
+| *"1 module Go, zero external dependency"* | Vẫn đúng — 1 phụ thuộc duy nhất là `pgx/v5` để đăng ký driver `database/sql` | §header |
 | §8.0 *"`drivers.account_id` là FK → `/v1/drivers/register` trả `driver_create_failed`"* | Đúng, **nhưng thiếu**: `trips.rider_id` cũng là FK tới `accounts` ⇒ `POST /v1/trips` cũng hỏng. ✅ Cả hai đã sửa ở GĐ 0 — mục §8.0 nay có thể **xoá khỏi spec** | §8.0 |
-| §8 chỉ nêu `identity.MemoryRepo` cần thay | 6 store luôn là bộ nhớ kể cả ở chế độ Postgres. ✅ `identity` và `wallet` đã xong; còn **4**: `matching`, `location`, `pricing`, `idem` | §8 nhóm B |
-| §3.2 *"`WeightIdle` × idle_giây"* | Code dùng **độ cũ của ping**, không phải thời gian rảnh | §3.2 |
+| §8 chỉ nêu `identity.MemoryRepo` cần thay | 6 store luôn là bộ nhớ kể cả ở chế độ Postgres. ✅ `identity`, `wallet`, `matching`, `admin_audit` đã xong; còn **3**: `location`, `pricing`, `idem` | §8 nhóm B |
+| §3.2 *"`WeightIdle` × idle_giây"* | ✅ đã sửa ở GĐ 2. Bản cũ dùng độ cũ của ping, tức **thưởng cho tài xế mạng kém**. Nay có `drivers.idle_since` | §3.2 |
+| §3.2 không nói gì về tài xế mới | Code nay **làm mượt Bayes** (10 lời mời ảo ở mức 0.8, 5 lượt đánh giá ảo ở mức 5.0). Không có nó, một tài xế bỏ lỡ đúng một lời mời sẽ có acceptance = 0 và **không bao giờ được mời lần thứ hai để gỡ lại**. Spec nên ghi cơ chế này | §3.2 |
 | §4.4 *"phí huỷ ghi có cho tài xế qua `wallet.CancelFee`"* | ✅ đã nối ở GĐ 1 qua `wallet.Service.PostCancelFee` + consumer `trip.cancelled` | §4.4 |
 | §5.2 *"3 loại cờ gian lận"* | ✅ **đã đủ 3** từ GĐ 0. `SPEED_OUTLIER` gắn cờ theo tốc độ **tự khai** nhưng **vẫn nhận ping** — khác `TELEPORT` (suy ra từ hai vị trí liên tiếp, bằng chứng chắc chắn nên từ chối). Spec nên ghi rõ khác biệt này | §5.2 |
-| §6 *"Outbox — sự kiện ghi cùng transaction, relay publish sau"* | Outbox **chưa nối vào bất kỳ luồng nào** | §6 |
+| §6 *"Outbox — sự kiện ghi cùng transaction, relay publish sau"* | ✅ đã nối ở GĐ 2. `Repository.Save` nay nhận thêm `msgs ...Message` và **trả về những sự kiện người gọi vẫn phải tự phát** — nhờ đó "ai phát sự kiện" là chi tiết của tầng lưu trữ, không phải một câu `if` rải trong Service. Spec nên mô tả chữ ký này | §6 |
 | §0.6 *"không dùng float cho tiền, kể cả biến tạm"* | ✅ đã sửa ở GĐ 1. **Spec nên bổ sung**: `SurgeProvider` trả permille `int64`, không phải `float64` — chữ ký này là một phần của nguyên tắc | §0.6 + §3.4 |
 | §3.4 bậc thang surge ghi bằng số thập phân (`4→2.0`) | Code nay dùng **permille số nguyên** (`4→2000`); so sánh ngưỡng cũng bằng số nguyên | §3.4 |
 | §5c *"Nhật ký thao tác admin — chưa làm"* | ✅ đã làm ở GĐ 1 (`admin_audit_log` + `GET /v1/admin/audit`) | §5c |
-| §1 sơ đồ vẽ `worker` như tiến trình độc lập | `cmd/worker` dùng **bus in-process riêng** ⇒ không nhận được sự kiện từ `cmd/api` | §1 + §6 |
+| §1 sơ đồ vẽ `worker` như tiến trình độc lập | `cmd/worker` vẫn dùng **bus in-process riêng** ⇒ chưa nhận được sự kiện từ `cmd/api`. ✅ Đã bỏ cái relay `MemoryStore` rỗng vô nghĩa; relay thật do `StartWorkers` chạy. Tách tiến trình chỉ có nghĩa **sau khi** thay bus bằng NATS | §1 + §6 |
+| §5.1 *"trip và event ghi trong CÙNG transaction"* | Nay là **trip + event + outbox** cùng một transaction | §5.1 |
 
 ---
 
-## 5.5 Những chỗ code làm **tốt hơn** spec — cần giữ
+## 5.6 Đính chính phân tích của lần đối chiếu đầu
+
+Hai kết luận trong bản đối chiếu đầu tiên **sai**, và đều sai theo hướng xem nhẹ vấn đề. Ghi lại
+ở đây vì chúng minh hoạ một điều: phân tích tĩnh mà không đo thì dễ tự trấn an.
+
+### Đ-01 · Sai lệch float **không** bị làm tròn che đi
+
+Bản đầu viết: *"Hiện tại `RoundTo(1000)` che mất sai số ở giá khách trả."* — **Sai.**
+
+Đo thật trên dải 2–40 km với 5 mức surge:
+
+| Đo | Kết quả |
+|---|---|
+| `computeBase` cho kết quả khác nhau | **29.199 / 38.001 cự ly (77%)** |
+| **Tổng cước khách phải trả** khác nhau | **422 / 190.005 tổ hợp** |
+| Mức lệch khi xảy ra | **đúng 1.000đ** |
+
+Cơ chế: sai lệch vài đồng ở `computeBase` **vắt qua ranh giới làm tròn nghìn**. `base = 17.001`
+làm tròn lên 18.000, còn `base = 17.000` giữ nguyên 17.000 — một đồng chênh lệch thành một nghìn
+đồng trên hoá đơn.
+
+Ví dụ cụ thể (đã thành test hồi quy `TestFloatDriftChangesFareByAThousand`):
+`2.219m` với surge 1.7 → số nguyên cho **23.000đ**, bản float cũ cho **22.000đ**.
+
+Nghĩa là G-09 không chỉ là "vi phạm nguyên tắc" — nó là **tính sai tiền của khách**.
+
+### Đ-02 · Lần thử đầu để viết test cho lỗi này là một test rỗng
+
+Test đầu tiên tôi viết cho G-09 tính lại kết quả bằng **chính đường code đang kiểm tra**, nên nó
+xanh cả khi khôi phục lại phép float cũ. Chỉ khi so với một phép tính số nguyên **độc lập** và
+quét cả dải giá trị thì mới tìm ra 422 tổ hợp lệch.
+
+> Bài học chung: một test hồi quy chưa được nhìn thấy đỏ với lỗi cũ thì chưa phải là test hồi quy.
+> Mọi lỗi ở [§5.4](#loi-moi) đều đã được kiểm ngược theo cách này — khôi phục lỗi, xác nhận test đỏ,
+> rồi mới sửa lại.
+
+---
+
+## 5.7 Những chỗ code làm **tốt hơn** spec — cần giữ
 
 1. **Adapter Port của `admin` đặt ở tầng lắp ráp** ([`app/admin.go`](../godrive/internal/app/admin.go))
    với kiểm tra tại thời điểm biên dịch `var _ admin.LocationPort = adminLocation{}`.
@@ -585,3 +351,26 @@ lại nằm lại vĩnh viễn. Với TTL 24 giờ và **mỗi chuyến một kh
 
 7. **`errs.Fail` che message của lỗi `internal`**, chỉ trả `"Đã có lỗi xảy ra"` + `trace_id`.
    Không rò rỉ chi tiết nội bộ ra client.
+
+**Bổ sung trong GĐ 0–2 — những quyết định nên giữ:**
+
+8. **Lưu số đếm, không lưu tỉ lệ** (migration 0005). Tỉ lệ suy ra được từ số đếm, chiều ngược lại
+   thì không; và cộng dồn số đếm là phép nguyên tử trong một câu `UPDATE`, còn đọc-sửa-ghi một tỉ lệ
+   thì không. Ba cột tỉ lệ cũ bị **xoá hẳn** thay vì để lại với giá trị mặc định vĩnh viễn — câu
+   truy vấn phân tích đầu tiên sẽ tin vào chúng.
+
+9. **`Repository.Save` trả về "những sự kiện người gọi vẫn phải tự phát".** Nhờ đó việc *ai* phát
+   sự kiện là chi tiết của tầng lưu trữ (Postgres → outbox; bộ nhớ → người gọi), không phải một
+   câu `if cfg.InMemory()` rải khắp Service.
+
+10. **Endpoint nạp ví chỉ tồn tại ở chế độ dev.** Một endpoint tự ghi có vào ví mà không có đối ứng
+    tiền thật chính là máy in tiền; nó được đăng ký có điều kiện theo `cfg.DevAuth` chứ không chỉ
+    được ghi chú "đừng dùng ở production".
+
+11. **`ClaimTrip` trên Postgres gộp ba việc vào một câu**: giành khoá nếu trống, giành lại nếu khoá
+    cũ hết hạn, giữ nguyên nếu người khác đang giữ — và **chính chủ gọi lại vẫn thắng**, để app
+    mobile retry không bị biến thành "chuyến đã có người khác nhận".
+
+12. **`UpdateWalletBalance` và `ApplyStats` cố ý KHÔNG tăng `version`.** `version` bảo vệ chuyển
+    trạng thái; số dư và thống kê là giá trị suy ra. Nếu chúng cũng tăng `version` thì việc đồng bộ
+    cache sẽ làm hỏng CAS của `Reserve` đang chạy song song.

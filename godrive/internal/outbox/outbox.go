@@ -223,8 +223,15 @@ type Relay struct {
 	Batch    int
 }
 
+// DefaultInterval là chu kỳ quét outbox.
+//
+// 200ms chứ không phải 1 giây: sự kiện trip.requested đi qua outbox, nên chu kỳ
+// này chính là độ trễ trước khi dispatcher bắt đầu tìm tài xế — khách hàng cảm
+// nhận được. Quét rẻ nhờ index một phần outbox_unpublished_idx.
+const DefaultInterval = 200 * time.Millisecond
+
 func NewRelay(s Store, bus eventbus.Bus, log *slog.Logger) *Relay {
-	return &Relay{store: s, bus: bus, log: log, Interval: time.Second, Batch: 100}
+	return &Relay{store: s, bus: bus, log: log, Interval: DefaultInterval, Batch: 100}
 }
 
 func (r *Relay) Run(ctx context.Context) {
@@ -235,22 +242,38 @@ func (r *Relay) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := r.tick(ctx); err != nil {
-				r.log.Error("outbox relay lỗi", "err", err)
+			// Quét cho tới khi hết việc: một lô đầy nghĩa là còn tồn đọng, chờ
+			// nhịp sau mới xử lý tiếp sẽ làm hàng đợi dài mãi khi có đợt tải cao.
+			for {
+				n, err := r.tick(ctx)
+				if err != nil {
+					r.log.Error("outbox relay lỗi", "err", err)
+					break
+				}
+				if n < r.Batch {
+					break
+				}
 			}
 		}
 	}
 }
 
-func (r *Relay) tick(ctx context.Context) error {
+// tick phát một lô và trả về số bản ghi đã xử lý.
+func (r *Relay) tick(ctx context.Context) (int, error) {
 	recs, err := r.store.FetchUnpublished(ctx, r.Batch)
 	if err != nil || len(recs) == 0 {
-		return err
+		return 0, err
 	}
 	var done []string
 	for _, rec := range recs {
 		var payload any
-		_ = json.Unmarshal(rec.Payload, &payload)
+		if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+			// Payload hỏng thì thử lại bao nhiêu lần cũng hỏng. Đếm số lần để
+			// nó rơi vào thư chết thay vì chặn hàng đợi mãi mãi.
+			r.log.Error("payload outbox không giải mã được", "id", rec.ID, "topic", rec.Topic, "err", err)
+			_ = r.store.MarkFailed(ctx, rec.ID)
+			continue
+		}
 		if err := r.bus.Publish(ctx, rec.Topic, payload); err != nil {
 			_ = r.store.MarkFailed(ctx, rec.ID)
 			continue
@@ -258,7 +281,7 @@ func (r *Relay) tick(ctx context.Context) error {
 		done = append(done, rec.ID)
 	}
 	if len(done) > 0 {
-		return r.store.MarkPublished(ctx, done)
+		return len(recs), r.store.MarkPublished(ctx, done)
 	}
-	return nil
+	return len(recs), nil
 }

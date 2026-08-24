@@ -11,6 +11,7 @@ import (
 	"github.com/example/godrive/internal/config"
 	"github.com/example/godrive/internal/driver"
 	"github.com/example/godrive/internal/location"
+	"github.com/example/godrive/internal/matching"
 	"github.com/example/godrive/internal/platform/authn"
 	"github.com/example/godrive/internal/platform/logger"
 	"github.com/example/godrive/internal/pricing"
@@ -31,7 +32,18 @@ const testDBEnv = "TEST_DATABASE_URL"
 var appTables = []string{
 	"trip_events", "offers", "trips", "driver_locations", "drivers",
 	"otp_challenges", "accounts", "ledger_entries", "ledger_transactions",
-	"idempotency_keys", "outbox", "admin_audit_log",
+	"idempotency_keys", "outbox", "admin_audit_log", "trip_claims",
+}
+
+// mustDB mở một kết nối phụ tới CSDL test.
+func mustDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("pgx", os.Getenv(testDBEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
 func newPostgresApp(t *testing.T) (*App, *sql.DB) {
@@ -470,5 +482,155 @@ func assertLedgerInvariants(t *testing.T, db *sql.DB) {
 	}
 	if orphans != 0 {
 		t.Errorf("%d bút toán mồ côi, không thuộc giao dịch nào", orphans)
+	}
+}
+
+// TestPostgresOutboxDeliversEventsAtLeastOnce là điều kiện hoàn thành của T-06.
+//
+// Trước GĐ 2, sự kiện được publish thẳng lên bus in-memory và handler lỗi chỉ
+// được ghi log rồi bỏ qua — một lần SettleTrip lỗi là chuyến đó vĩnh viễn không
+// được ghi sổ, và không có gì phát hiện ra. Giờ sự kiện ghi vào outbox TRONG
+// CÙNG transaction với thay đổi nghiệp vụ, relay phát lại cho tới khi thành công.
+func TestPostgresOutboxDeliversEventsAtLeastOnce(t *testing.T) {
+	ctx := context.Background()
+	a, db := newPostgresApp(t)
+
+	riderID := login(t, a, "0901234567", authn.RoleRider)
+	q, err := a.Pricing.Estimate(ctx, pricing.EstimateInput{
+		VehicleType: driver.VehicleBike, Pickup: pickup, Dropoff: dropoff,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CHƯA chạy worker: sự kiện phải nằm lại trong outbox, không bốc hơi.
+	tr, err := a.Trips.Create(ctx, trip.CreateInput{
+		RiderID: riderID, QuoteID: q.ID,
+		Pickup: trip.Place{Point: pickup}, Dropoff: trip.Place{Point: dropoff},
+		PaymentMethod: trip.PayCash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var pending int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM outbox WHERE published_at IS NULL AND topic='trip.requested'`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("trip.requested phải nằm trong outbox chờ phát, có %d bản ghi", pending)
+	}
+
+	// Sự kiện và thay đổi nghiệp vụ nằm cùng một transaction: chuyến đã SEARCHING
+	// thì sự kiện chắc chắn có mặt, không thể lệch nhau.
+	var status string
+	if err := db.QueryRow(`SELECT status FROM trips WHERE id=$1`, tr.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(trip.StatusSearching) {
+		t.Fatalf("chuyến phải ở SEARCHING, đang %s", status)
+	}
+
+	// Bật worker -> relay phát nốt những gì còn tồn đọng.
+	a.StartWorkers(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := db.QueryRow(
+			`SELECT count(*) FROM outbox WHERE published_at IS NULL`).Scan(&pending); err != nil {
+			t.Fatal(err)
+		}
+		if pending == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("relay phải phát hết outbox, còn tồn %d", pending)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	var dead int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM outbox WHERE published_at IS NULL AND attempts >= 10`).Scan(&dead); err != nil {
+		t.Fatal(err)
+	}
+	if dead != 0 {
+		t.Fatalf("không được có sự kiện chết, có %d", dead)
+	}
+}
+
+// TestPostgresOfferUniqueIndexBlocksDoubleAccept: chốt chặn CUỐI ở tầng CSDL.
+//
+// Hai lớp bảo vệ ở tầng ứng dụng (ClaimTrip và CAS Reserve) có thể bị một bug
+// tương lai đi vòng qua. Unique partial index thì không.
+func TestPostgresOfferUniqueIndexBlocksDoubleAccept(t *testing.T) {
+	_, db := newPostgresApp(t)
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustExec(`INSERT INTO accounts (id, phone, role) VALUES ('acc_x','+84900000009','driver')`)
+	mustExec(`INSERT INTO drivers (id, account_id, full_name, phone, vehicle_type, vehicle_plate,
+	          national_id, driver_license) VALUES ('drv_x','acc_x','X','+84900000009','BIKE','59X1-000.00','n','d')`)
+	mustExec(`INSERT INTO trips (id, rider_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+	          vehicle_type, quote_id, fare, platform_fee, driver_earn, payment_method, status, requested_at)
+	          VALUES ('trp_x','acc_x',10.7,106.7,10.8,106.8,'BIKE','q',1000,200,800,'CASH','SEARCHING',now())`)
+
+	ins := `INSERT INTO offers (id, trip_id, driver_id, status, expires_at)
+	        VALUES ($1,'trp_x','drv_x','ACCEPTED', now() + interval '1 hour')`
+	mustExec(ins, "ofr_1")
+
+	// Lời mời ACCEPTED thứ hai cho CÙNG chuyến phải bị chặn ở tầng CSDL.
+	if _, err := db.Exec(ins, "ofr_2"); err == nil {
+		t.Fatal("offers_one_accepted_per_trip phải chặn lời mời ACCEPTED thứ hai")
+	}
+
+	// Nhưng nhiều lời mời PENDING cho cùng chuyến thì hợp lệ (chào mời theo lô).
+	if _, err := db.Exec(`INSERT INTO offers (id, trip_id, driver_id, status, expires_at)
+	    VALUES ('ofr_3','trp_x','drv_x','PENDING', now() + interval '1 hour')`); err != nil {
+		t.Fatalf("nhiều lời mời PENDING cho một chuyến phải hợp lệ: %v", err)
+	}
+}
+
+// TestPostgresClaimTripIsAtomic: hai tài xế giành cùng một chuyến qua Postgres,
+// đúng một người được.
+func TestPostgresClaimTripIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	a, _ := newPostgresApp(t)
+
+	store := matching.NewPostgresStore(mustDB(t), a.Clock)
+	const n = 16
+	res := make(chan bool, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			won, err := store.ClaimTrip(ctx, "trp_claim", "drv_"+string(rune('a'+i)), 30*time.Second)
+			if err != nil {
+				t.Error(err)
+			}
+			res <- won
+		}(i)
+	}
+	wins := 0
+	for i := 0; i < n; i++ {
+		if <-res {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("đúng MỘT tài xế được giành chuyến, có %d người thắng", wins)
+	}
+
+	// Cùng tài xế gọi lại vẫn thắng: app mobile retry không được biến thành
+	// "chuyến đã có người khác nhận".
+	won, err := store.ClaimTrip(ctx, "trp_claim2", "drv_same", 30*time.Second)
+	if err != nil || !won {
+		t.Fatalf("lần giành đầu phải thắng: won=%v err=%v", won, err)
+	}
+	won, err = store.ClaimTrip(ctx, "trp_claim2", "drv_same", 30*time.Second)
+	if err != nil || !won {
+		t.Fatalf("chính chủ gọi lại vẫn phải thắng (idempotent): won=%v err=%v", won, err)
 	}
 }

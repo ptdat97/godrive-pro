@@ -72,6 +72,9 @@ type Config struct {
 	MaxRounds      int
 	BatchSize      int
 	OfferTTL       time.Duration
+	// EmptyRoundWait là thời gian chờ trước khi thử vòng sau khi vòng này không
+	// tìm được ứng viên nào. Ngắn quá thì quét lại vô ích, dài quá thì khách chờ.
+	EmptyRoundWait time.Duration
 	MinBatteryPc   int
 
 	// Trọng số chấm điểm (điểm càng THẤP càng tốt).
@@ -90,6 +93,7 @@ func DefaultConfig() Config {
 		MaxRounds:      3,
 		BatchSize:      5,
 		OfferTTL:       15 * time.Second,
+		EmptyRoundWait: 2 * time.Second,
 		MinBatteryPc:   15,
 
 		WeightETA:        1.0,  // mỗi giây ETA = 1 điểm phạt

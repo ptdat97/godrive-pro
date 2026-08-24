@@ -48,9 +48,13 @@ func (s *Service) SettleTrip(ctx context.Context, tripID, driverID string, fare,
 		}
 	}
 	s.announceBalance(ctx, driverID)
-	return s.bus.Publish(ctx, eventbus.TopicPaymentSettled, map[string]any{
+	// Sổ cái đã ghi xong. Lỗi ở bước PHÁT THÔNG BÁO không được biến thành lỗi
+	// của SettleTrip: người gọi sẽ tưởng chưa ghi sổ và bỏ dở phần việc còn lại
+	// (đánh dấu đã trả tiền, trả tài xế về IDLE).
+	_ = s.bus.Publish(ctx, eventbus.TopicPaymentSettled, map[string]any{
 		"trip_id": tripID, "driver_id": driverID, "cash": cash,
 	})
+	return nil
 }
 
 // PostCancelFee ghi có phí huỷ chuyến cho tài xế, ghi nợ khách.

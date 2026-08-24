@@ -19,13 +19,24 @@ const DefaultDebtLimit = money.VND(200000)
 // Biển số VN: 2 số + 1-2 chữ + dãy số. Chấp nhận cả có/không dấu chấm.
 var plateRe = regexp.MustCompile(`^[0-9]{2}[A-Z]{1,2}[0-9]?-?[0-9]{3}\.?[0-9]{2}$`)
 
+// TripPort cho biết tài xế có chuyến nào đang chạy không.
+//
+// Port khai báo ở đây (bên tiêu thụ) nên driver không phải import trip.
+type TripPort interface {
+	HasActiveTrip(ctx context.Context, driverID string) (bool, error)
+}
+
 type Service struct {
 	repo      Repository
 	bus       eventbus.Bus
 	clk       clock.Clock
 	debtLimit money.VND
 	balance   BalanceReader
+	trips     TripPort
 }
+
+// UseTripPort bật đường tự khôi phục khi tài xế kẹt trạng thái.
+func (s *Service) UseTripPort(t TripPort) { s.trips = t }
 
 func NewService(repo Repository, bus eventbus.Bus, clk clock.Clock) *Service {
 	return &Service{repo: repo, bus: bus, clk: clk, debtLimit: DefaultDebtLimit}
@@ -114,6 +125,22 @@ func (s *Service) GoOnline(ctx context.Context, driverID string) error {
 	}
 	if d.Status == StatusIdle {
 		return nil // idempotent
+	}
+	// Đường thoát cho trạng thái kẹt: tài xế đang mang trạng thái ASSIGNED hoặc
+	// ON_TRIP nhưng thực tế KHÔNG có chuyến nào đang chạy (tiến trình chết giữa
+	// chừng, sự kiện bị mất). Nếu không có lối này, cách duy nhất để họ làm việc
+	// lại là gọi tổng đài nhờ sửa tay trong CSDL.
+	if d.Status == StatusAssigned || d.Status == StatusOnTrip {
+		if s.trips == nil {
+			return errs.Conflict("driver_on_trip", "Bạn đang trong một chuyến, không thể bật nhận chuyến.")
+		}
+		active, err := s.trips.HasActiveTrip(ctx, driverID)
+		if err != nil {
+			return err
+		}
+		if active {
+			return errs.Conflict("driver_on_trip", "Bạn cần hoàn tất chuyến hiện tại trước.")
+		}
 	}
 	if err := s.repo.UpdateStatus(ctx, driverID, d.Status, StatusIdle, d.Version); err != nil {
 		return err

@@ -6,6 +6,9 @@ Mỗi mục: **Port phơi ra** · **Bất biến phải giữ** · **Tham số c
 
 ## 3.1 `identity` — đăng nhập bằng số điện thoại + OTP
 
+> **Cập nhật GĐ 0–2.** Các mục "Điểm hở" bên dưới đã được sửa phần lớn; xem
+> [05 §5.3](05-doi-chieu-spec-code.md) để biết trạng thái từng gap.
+
 | | |
 |---|---|
 | **Phơi ra** | `RequestOTP(phone, role) → (challengeID, devCode)`, `VerifyOTP(challengeID, code, deviceID) → TokenPair`, `GetAccount` |
@@ -366,10 +369,11 @@ tâm bản đồ mặc định = Chợ Bến Thành `(10.7725, 106.6980)`
 | `pkg/id` | ID sắp xếp theo thời gian: `prefix_` + base32(ms ‖ random) | Thân thiện B-tree. `HasPrefix` chống nhầm `driverID` vào `tripID` |
 | `pkg/idem` | `Reserve` / `Complete` / **`Release`** | Chỉ có bản bộ nhớ. `Reserve` trả **bản sao** (con trỏ nội bộ thoát ra ngoài khoá từng là data race — [G-29](05-doi-chieu-spec-code.md#g-29)); có quét dọn khoá quá hạn |
 | `pkg/clock` | `Clock` tiêm được + `Mock` cho test | ✅ `location`, `httpx.RateLimit`, `matching.MemoryStore`, và cả `app.NewWithClock` đã tiêm được. 🟡 còn `eventbus`, `outbox`, `pkg/idem`. **Store và Engine phải dùng CHUNG một đồng hồ** — lệch nhau gây lỗi phụ thuộc giờ chạy ([G-30](05-doi-chieu-spec-code.md#g-30)) |
-| `platform/authn` | JWT HS256 tự cài bằng stdlib. `Require(roles…)` middleware | Không có `jti`, không thu hồi được, không refresh token |
+| `platform/authn` | JWT HS256 tự cài bằng stdlib. `Require(roles…)` middleware | Không có `jti`, không thu hồi được, không refresh token ([G-21](05-doi-chieu-spec-code.md#g-21)) |
+| `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | ✅ mới ở GĐ 0. Mọi `go func()` chạy code nghiệp vụ đều phải mở đầu bằng nó |
 | `platform/httpx` | `JSON`, `Fail`, `Decode` (giới hạn 1MB + `DisallowUnknownFields`), `RequestID`/`Logging`/`Recover`/`RateLimit` | ✅ rate limit nay dọn bucket nguội (`IdleTTL` 10', `SweepEvery` 1') |
 | `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | Mới từ GĐ 0. **Mọi `go func()` chạy code nghiệp vụ phải mở đầu bằng nó** |
-| `platform/eventbus` | `Bus` in-memory, publish bất đồng bộ | **at-most-once**, không retry, không DLQ |
+| `platform/eventbus` | `Bus` in-memory, publish bất đồng bộ | ✅ dùng đúng `WaitGroup`; khi đang tắt thì chạy handler **đồng bộ** để không mất sự kiện ([G-34](05-doi-chieu-spec-code.md#g-34)). Vẫn cần NATS để bảo đảm **xử lý xong**, không chỉ **phát đi** |
 | `platform/logger` | `slog` + `logger.From(ctx)` | |
-| `notification` | `Pusher`, `SMSSender`, `OTPSender` | Chỉ `LogOTPSender` được nối; `LogPusher` **chưa ai dùng** |
+| `notification` | `Pusher`, `SMSSender`, `OTPSender` | Chỉ `LogOTPSender` được nối; `LogPusher` **chưa ai dùng** — chờ FCM/APNs ở GĐ 3 ([G-11](05-doi-chieu-spec-code.md#g-11)) |
 | `outbox` | `Store` + `Relay` | **Chưa nối vào bất kỳ luồng nghiệp vụ nào** |

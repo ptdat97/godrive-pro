@@ -25,7 +25,8 @@ func (a *App) StartWorkers(ctx context.Context) {
 	a.Bus.Subscribe(eventbus.TopicTripRequested, a.onTripRequestedSurge)
 	a.Bus.Subscribe(eventbus.TopicTripCompleted, a.onTripCompleted)
 	// Đồng bộ trạng thái tài xế theo vòng đời chuyến.
-	a.Bus.Subscribe(eventbus.TopicTripStarted, a.setDriverStatus(driver.StatusOnTrip))
+	a.Bus.Subscribe(eventbus.TopicTripAssigned, a.syncDriverStatus)
+	a.Bus.Subscribe(eventbus.TopicTripStarted, a.syncDriverStatus)
 	a.Bus.Subscribe(eventbus.TopicTripCancelled, a.onTripCancelled)
 	// Đồng bộ cột cache drivers.wallet_balance từ sổ cái.
 	a.Bus.Subscribe(eventbus.TopicWalletBalanceChanged, a.onWalletBalanceChanged)
@@ -143,7 +144,7 @@ func (a *App) onTripCompleted(ctx context.Context, e eventbus.Event) error {
 		return err
 	}
 	// Trả tài xế về trạng thái sẵn sàng nhận chuyến mới.
-	return a.Drivers.SetStatus(ctx, p.DriverID, driver.StatusIdle)
+	return a.syncDriverStatus(ctx, e)
 }
 
 // onOfferStat cộng dồn số lời mời gửi đi / được nhận cho tài xế.
@@ -218,7 +219,7 @@ func (a *App) onTripCancelled(ctx context.Context, e eventbus.Event) error {
 			return err
 		}
 	}
-	return a.Drivers.SetStatus(ctx, *p.DriverID, driver.StatusIdle)
+	return a.syncDriverStatus(ctx, e)
 }
 
 // onWalletBalanceChanged đồng bộ cột cache drivers.wallet_balance.
@@ -243,27 +244,59 @@ func (a *App) onWalletBalanceChanged(ctx context.Context, e eventbus.Event) erro
 	return a.Drivers.SyncWalletBalance(ctx, p.AccountID, bal)
 }
 
-// setDriverStatus tạo handler đổi trạng thái tài xế theo sự kiện chuyến.
-func (a *App) setDriverStatus(to driver.Status) eventbus.Handler {
-	return func(ctx context.Context, e eventbus.Event) error {
-		var p struct {
-			TripID   string  `json:"trip_id"`
-			DriverID *string `json:"driver_id"`
-		}
-		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			return err
-		}
-		if p.DriverID == nil || *p.DriverID == "" {
-			// Chuyến bị huỷ khi chưa ghép tài xế: không có gì để cập nhật.
-			if p.TripID != "" {
-				t, err := a.Trips.Get(ctx, p.TripID)
-				if err != nil || t.DriverID == nil {
-					return nil
-				}
-				return a.Drivers.SetStatus(ctx, *t.DriverID, to)
-			}
-			return nil
-		}
-		return a.Drivers.SetStatus(ctx, *p.DriverID, to)
+// driverStatusFor suy trạng thái tài xế từ trạng thái chuyến.
+//
+// Bảng tra này là nguồn sự thật duy nhất cho việc "chuyến đang thế này thì tài
+// xế phải đang thế kia".
+func driverStatusFor(st trip.Status) (driver.Status, bool) {
+	switch st {
+	case trip.StatusAssigned, trip.StatusArrived:
+		return driver.StatusAssigned, true
+	case trip.StatusInProgress:
+		return driver.StatusOnTrip, true
+	case trip.StatusCompleted, trip.StatusPaid, trip.StatusCancelled, trip.StatusExpired:
+		return driver.StatusIdle, true
+	default:
+		return "", false
 	}
+}
+
+// syncDriverStatus đặt trạng thái tài xế theo trạng thái HIỆN TẠI của chuyến,
+// không theo sự kiện nào vừa kích hoạt handler.
+//
+// Vì sao không dùng thẳng sự kiện: bus phát bất đồng bộ, mỗi handler một
+// goroutine, nên trip.started và trip.completed có thể chạy xong theo thứ tự
+// ngược lại. Khi đó handler của completed đặt IDLE trước, rồi handler của
+// started đặt lại ON_TRIP — tài xế kẹt vĩnh viễn ở ON_TRIP, không nhận được
+// chuyến mới, và không có lỗi nào được ghi ở đâu cả. Đo thực tế: khoảng 10%
+// số chuyến khi hai bước đi liền nhau.
+//
+// Đọc lại trạng thái chuyến ngay tại thời điểm xử lý làm phép gán này HỘI TỤ:
+// sự kiện đến muộn cũng chỉ đặt lại đúng giá trị mà chuyến đang cần.
+func (a *App) syncDriverStatus(ctx context.Context, e eventbus.Event) error {
+	var p struct {
+		TripID string `json:"trip_id"`
+	}
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return err
+	}
+	if p.TripID == "" {
+		return nil
+	}
+	t, err := a.Trips.Get(ctx, p.TripID)
+	if err != nil || t.DriverID == nil {
+		return nil
+	}
+	want, ok := driverStatusFor(t.Status)
+	if !ok {
+		return nil
+	}
+	cur, err := a.Drivers.Get(ctx, *t.DriverID)
+	if err != nil {
+		return err
+	}
+	if cur.Status == want {
+		return nil // đã đúng, không đụng tới version
+	}
+	return a.Drivers.SetStatus(ctx, *t.DriverID, want)
 }

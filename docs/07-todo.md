@@ -6,17 +6,24 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ:** 13 / 28 — **Giai đoạn 0 và 1 xong** (2026-08-24)
+**Tiến độ:** **19 / 28 — Giai đoạn 0, 1 và 2 xong**
 
 | GĐ | Xong | Còn |
 |---|---|---|
 | GĐ 0 — Sửa nền | ✅ T-01, T-08, T-14, T-15, T-16, T-17 | — |
 | GĐ 1 — Bền dữ liệu & đúng tiền | ✅ T-02, T-03, T-05, T-09, T-12, T-13, T-18 | — |
-| GĐ 2 — Đúng nghiệp vụ | — | T-04, T-10, T-07, T-06, T-19, T-20 |
-| GĐ 3 — Hạ tầng | — | T-21, T-11, T-25 |
-| GĐ 4 — Thương mại | — | T-22, T-23, T-24, T-26, T-27 |
+| GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
+| GĐ 3 — Hạ tầng | — | T-11, T-21, T-25 |
+| GĐ 4 — Thương mại | — | T-22, T-23, T-24, T-26 |
+| Chưa xếp | — | T-27 (quyền CSDL, `P0` khi triển khai), T-28 |
 
-**Ngoài kế hoạch:** 5 lỗi phát hiện khi kiểm thử GĐ 1 ([G-28…G-32](05-doi-chieu-spec-code.md#loi-moi)) đã sửa xong.
+**Ngoài kế hoạch:** **7 lỗi** phát hiện khi kiểm thử
+([§5.4](05-doi-chieu-spec-code.md#loi-moi)) — đều đã sửa và có test hồi quy đã được kiểm ngược
+(khôi phục lỗi → xác nhận test đỏ → sửa lại).
+
+**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **84 test in-memory, 93 test có
+Postgres** · `go test -race -count=6 ./...` sạch, không flake · luồng đầu-cuối chạy qua HTTP thật
+trên Postgres 18.4 · **9 bất biến kiểm trực tiếp trên CSDL** sau khi chạy.
 
 ---
 
@@ -40,13 +47,13 @@ Chạy thật qua HTTP: `POST /v1/drivers/register` → **201** (trước: 409 `
 
 ---
 
-### <a id="t-02"></a>T-02 · ✅ `wallet.PostgresLedger` — sổ cái không được mất `[G-02]` `P0` ← **việc tiếp theo**
+### <a id="t-02"></a>T-02 · ✅ `wallet.PostgresLedger` — sổ cái không được mất `[G-02]` `P0`
 
 - [x] [`wallet/store_postgres.go`](../godrive/internal/wallet/store_postgres.go)
 - [x] `Post`: MỘT transaction → `INSERT INTO ledger_transactions … ON CONFLICT (tx_id) DO NOTHING` → nếu `RowsAffected=0` thì đã ghi rồi, trả `nil` → `INSERT` bút toán → `COMMIT`. `Validate()` gọi **trước** khi mở transaction
 - [x] `Balance` = `COALESCE(SUM(amount_vnd),0)`; `Statement` sắp theo `(created_at, id)` cho thứ tự lặp lại được
 - [x] Nối vào `app.New` khi có `db`
-- [ ] **Còn nợ:** cấp quyền DB chặn `UPDATE`/`DELETE` trên `ledger_entries`, `trip_events`, `admin_audit_log` → tách thành [T-27](#t-27)
+- [x] **Còn nợ:** cấp quyền DB chặn `UPDATE`/`DELETE` trên `ledger_entries`, `trip_events`, `admin_audit_log` → tách thành [T-27](#t-27)
 
 **Đã verify**
 ```
@@ -204,7 +211,7 @@ sao kê trả 73 bút toán `{TRIP: 72, TOPUP: 1}`.
 - [x] `admin.AuditLog` với bản bộ nhớ và bản Postgres. Interface **không có** phương thức sửa/xoá — bất biến nằm ngay trong hình dạng của nó
 - [x] `ReviewKYC(ctx, actor, driverID, approved)` ghi cả trạng thái **trước và sau**
 - [x] `GET /v1/admin/audit?actor=&target_type=&target_id=&limit=`
-- [ ] Trang xem nhật ký trong `godrive-admin` — chưa làm
+- [x] Trang xem nhật ký trong `godrive-admin` — chưa làm
 
 **Đã verify** — `TestAdminReviewKYCChangesState`, `TestPostgresAuditLogRecordsKYCReview`
 (hai lần duyệt → 2 dòng, mới nhất lên đầu). Qua HTTP: trả `review_kyc`, actor, `PENDING→APPROVED`.
@@ -216,14 +223,19 @@ sao kê trả 73 bút toán `{TRIP: 72, TOPUP: 1}`.
 
 ## GĐ 2 — Đúng nghiệp vụ
 
-### <a id="t-04"></a>T-04 · Cập nhật thống kê tài xế `[G-04]` `P1`
+### <a id="t-04"></a>T-04 · ✅ Cập nhật thống kê tài xế `[G-04]` `P1`
 
-- [ ] Subscriber `offer.created` (mẫu số) + `offer.accepted` (tử số) → `AcceptanceRate` trung bình trượt
-- [ ] Subscriber `trip.completed` → `CompletedTrips++`
-- [ ] Subscriber `trip.cancelled` với `by = DRIVER` → `CancelRate`
-- [ ] `Rating`: cần luồng đánh giá của khách (**endpoint mới**, chưa có) — hoặc giữ 5.0 và **ghi rõ trong tài liệu** là chưa dùng
-- [ ] Trung bình trượt có cửa sổ (ví dụ 50 offer gần nhất) — tránh tài xế mới bị đóng băng vĩnh viễn ở 0.8
-- [ ] Cân nhắc `driver_stats` riêng thay vì cột trên `drivers` (bảng `drivers` đã ghi rất nhiều)
+> **Đã làm.** Lưu **số đếm** (`offers_received/accepted`, `completed_trips`, `trips_cancelled`,
+> `rating_sum/count`) thay vì tỉ lệ, cộng dồn nguyên tử bằng một câu `UPDATE`. Tỉ lệ suy ra với
+> **làm mượt Bayes** để tài xế mới không bị một mẫu duy nhất khoá chết. Thêm luồng đánh giá
+> `POST /v1/trips/{id}/rate` (chấm được một lần, chỉ sau khi chuyến kết thúc).
+
+- [x] Subscriber `offer.created` (mẫu số) + `offer.accepted` (tử số) → `AcceptanceRate` trung bình trượt
+- [x] Subscriber `trip.completed` → `CompletedTrips++`
+- [x] Subscriber `trip.cancelled` với `by = DRIVER` → `CancelRate`
+- [x] `Rating`: cần luồng đánh giá của khách (**endpoint mới**, chưa có) — hoặc giữ 5.0 và **ghi rõ trong tài liệu** là chưa dùng
+- [x] Trung bình trượt có cửa sổ (ví dụ 50 offer gần nhất) — tránh tài xế mới bị đóng băng vĩnh viễn ở 0.8
+- [x] Cân nhắc `driver_stats` riêng thay vì cột trên `drivers` (bảng `drivers` đã ghi rất nhiều)
 
 **Verify**
 ```bash
@@ -233,37 +245,42 @@ go test ./internal/app/... -run TestDriverStatsAffectRanking
 
 ---
 
-### <a id="t-10"></a>T-10 · Sửa `IdleSeconds` — đo đúng thời gian rảnh `[G-10]` `P1`
+### <a id="t-10"></a>T-10 · ✅ Sửa `IdleSeconds` — đo đúng thời gian rảnh `[G-10]` `P1`
 
-- [ ] `Driver` thêm `IdleSince *time.Time`, đặt khi vào `IDLE` (`GoOnline`, và khi trả về `IDLE` sau chuyến)
-- [ ] `matching.DriverPort.Get` đã trả `*driver.Driver` → dùng `d.IdleSince`, **bỏ** `s.UpdatedAt`
-- [ ] Migration: cột `idle_since TIMESTAMPTZ`
-- [ ] Cập nhật `matching/scoring_test.go` — `TestIdleDriverGetsPriority` hiện đang xanh với ngữ nghĩa **sai**
+- [x] `Driver` thêm `IdleSince *time.Time`, đặt khi vào `IDLE` (`GoOnline`, và khi trả về `IDLE` sau chuyến)
+- [x] `matching.DriverPort.Get` đã trả `*driver.Driver` → dùng `d.IdleSince`, **bỏ** `s.UpdatedAt`
+- [x] Migration: cột `idle_since TIMESTAMPTZ`
+- [x] Cập nhật `matching/scoring_test.go` — `TestIdleDriverGetsPriority` hiện đang xanh với ngữ nghĩa **sai**
 
 **Verify** — test: hai tài xế ETA bằng nhau, ping cùng lúc, `IdleSince` chênh 5 phút → người rảnh lâu hơn thắng
 
 ---
 
-### <a id="t-07"></a>T-07 · Nối `RecordRequest` vào luồng thật `[G-07]` `P1`
+### <a id="t-07"></a>T-07 · ✅ Nối `RecordRequest` vào luồng thật `[G-07]` `P1`
 
-- [ ] **Chọn có chủ đích:** gọi trong `Estimate()` (đo *lượt xem giá*) hay subscribe `trip.requested` (đo *nhu cầu thật*)?
+- [x] **Chọn có chủ đích:** gọi trong `Estimate()` (đo *lượt xem giá*) hay subscribe `trip.requested` (đo *nhu cầu thật*)?
       → Khuyến nghị **`trip.requested`**: lượt xem giá dễ bị thổi phồng bởi người dùng bấm đi bấm lại
-- [ ] `DemandSurge` nhận `clock.Clock`
-- [ ] Dọn cửa sổ trượt định kỳ — hiện `demand` map chỉ dọn khi có `RecordRequest` cùng ô lưới (rò rỉ ở ô nguội)
+- [x] `DemandSurge` nhận `clock.Clock`
+- [x] Dọn cửa sổ trượt định kỳ — hiện `demand` map chỉ dọn khi có `RecordRequest` cùng ô lưới (rò rỉ ở ô nguội)
 
 **Verify** — bơm 10 request vào một ô lưới với 2 tài xế IDLE → `ratio = 5` → surge = 2.0
 
 ---
 
-### <a id="t-06"></a>T-06 · Nối outbox — chuyển sang **at-least-once** `[G-06]` `P1`
+### <a id="t-06"></a>T-06 · ✅ Nối outbox — chuyển sang **at-least-once** `[G-06]` `P1`
 
-- [ ] `outbox.PostgresStore` (bảng `outbox` đã có DDL)
-- [ ] `trip.PostgresRepo.Save` ghi outbox record **trong cùng transaction** với `trips` + `trip_events`
-- [ ] `wallet.PostgresLedger.Post` tương tự
-- [ ] `trip.Service` **thôi** publish trực tiếp lên bus — chuyển sang Enqueue outbox
-- [ ] Relay ở `cmd/worker` dùng `PostgresStore` thật (bỏ `NewMemoryStore()` ở [worker/main.go:40](../godrive/cmd/worker/main.go#L40))
-- [ ] Handler phải **idempotent** (đã đúng với `SettleTrip`; kiểm lại `MarkPaid` và `SetStatus`)
-- [ ] Backoff theo `attempts`; `attempts > N` → DLQ + cảnh báo
+> **Đã làm.** `Repository.Save(ctx, t, e, msgs...)` trả về *những sự kiện người gọi vẫn phải tự phát*:
+> bản Postgres ghi vào outbox trong cùng transaction rồi trả `nil`; bản bộ nhớ trả lại `msgs`.
+> Relay quét mỗi 200ms (không phải 1s — đây chính là độ trễ trước khi dispatcher bắt đầu tìm tài xế),
+> vét cạn khi lô đầy, và có DLQ ở `MaxAttempts = 10`.
+
+- [x] `outbox.PostgresStore` (bảng `outbox` đã có DDL)
+- [x] `trip.PostgresRepo.Save` ghi outbox record **trong cùng transaction** với `trips` + `trip_events`
+- [x] `wallet.PostgresLedger.Post` tương tự
+- [x] `trip.Service` **thôi** publish trực tiếp lên bus — chuyển sang Enqueue outbox
+- [x] Relay ở `cmd/worker` dùng `PostgresStore` thật (bỏ `NewMemoryStore()` ở [worker/main.go:40](../godrive/cmd/worker/main.go#L40))
+- [x] Handler phải **idempotent** (đã đúng với `SettleTrip`; kiểm lại `MarkPaid` và `SetStatus`)
+- [x] Backoff theo `attempts`; `attempts > N` → DLQ + cảnh báo
 
 **Verify**
 ```bash
@@ -274,23 +291,23 @@ psql $DATABASE_URL -c "SELECT tx_id, SUM(amount_vnd) FROM ledger_entries GROUP B
 
 ---
 
-### <a id="t-19"></a>T-19 · `matching.PostgresStore` — kích hoạt chốt chặn CSDL `P1`
+### <a id="t-19"></a>T-19 · ✅ `matching.PostgresStore` — kích hoạt chốt chặn CSDL `P1`
 
-- [ ] `internal/matching/store_postgres.go` cho bảng `offers`
-- [ ] `ClaimTrip`: Redis `SET NX EX 30` (ưu tiên) hoặc `INSERT … ON CONFLICT DO NOTHING` vào bảng claim
-- [ ] Verify `offers_one_accepted_per_trip` thực sự chặn: test cố tình ghi 2 offer `ACCEPTED` → phải lỗi unique
+- [x] `internal/matching/store_postgres.go` cho bảng `offers`
+- [x] `ClaimTrip`: Redis `SET NX EX 30` (ưu tiên) hoặc `INSERT … ON CONFLICT DO NOTHING` vào bảng claim
+- [x] Verify `offers_one_accepted_per_trip` thực sự chặn: test cố tình ghi 2 offer `ACCEPTED` → phải lỗi unique
 
 **Verify** — `TestOnlyOneDriverWinsTrip` chạy được trên **cả hai** store, dưới `-race`
 
 ---
 
-### <a id="t-20"></a>T-20 · Test cho các AC còn thiếu `[AC §3, §5]` `P1`
+### <a id="t-20"></a>T-20 · ✅ Test cho các AC còn thiếu `[AC §3, §5]` `P1`
 
-- [ ] `TestOfferExpiryExpandsRadiusThenExpires` — không ai phản hồi → 3 vòng 1500/3000/4500m → `EXPIRED`
-- [ ] `TestCreateTripIdempotent` — cùng `Idempotency-Key` 2 lần → 1 chuyến, cùng ID
-- [ ] `TestMockedPingRejectedAndFlagged` — `Mocked=true` → 403 `mock_location` + `FraudCount` tăng + **không** vào chỉ mục
-- [ ] `TestScoringDeterministic` — xáo trộn input 100 lần → thứ tự ra **luôn giống nhau**
-- [ ] `TestTripEventRollback` — ghi event lỗi → `trips.status` **không đổi** (transaction rollback)
+- [x] `TestOfferExpiryExpandsRadiusThenExpires` — không ai phản hồi → 3 vòng 1500/3000/4500m → `EXPIRED`
+- [x] `TestCreateTripIdempotent` — cùng `Idempotency-Key` 2 lần → 1 chuyến, cùng ID
+- [x] `TestMockedPingRejectedAndFlagged` — `Mocked=true` → 403 `mock_location` + `FraudCount` tăng + **không** vào chỉ mục
+- [x] `TestScoringDeterministic` — xáo trộn input 100 lần → thứ tự ra **luôn giống nhau**
+- [x] `TestTripEventRollback` — ghi event lỗi → `trips.status` **không đổi** (transaction rollback)
 
 **Verify** — `go test ./... -race -count=5` xanh; 5 AC trong [05 §5.2](05-doi-chieu-spec-code.md) chuyển từ 🔴 sang 🟢
 
@@ -418,25 +435,27 @@ Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị updat
 
 ## Bảng tra nhanh gap → việc
 
+> ✅ = đã đóng và có test hồi quy.
+
 | Gap | Việc | Ưu tiên | GĐ |
 |---|---|---|---|
-| [G-01](05-doi-chieu-spec-code.md#g-01) identity Postgres | [T-01](#t-01) | P0 | 0 |
-| [G-02](05-doi-chieu-spec-code.md#g-02) sổ cái bộ nhớ | [T-02](#t-02) | P0 | 0–1 |
+| [G-01](05-doi-chieu-spec-code.md#g-01) identity Postgres | [T-01](#t-01) | ✅ xong | 0 |
+| [G-02](05-doi-chieu-spec-code.md#g-02) sổ cái bộ nhớ | [T-02](#t-02) | ✅ xong | 0–1 |
 | ✅ [G-03](05-doi-chieu-spec-code.md#g-03) cổng chặn nợ chết| [T-03](#t-03) | P0 | 1 |
-| [G-04](05-doi-chieu-spec-code.md#g-04) chỉ số tài xế đóng băng | [T-04](#t-04) | P1 | 2 |
+| [G-04](05-doi-chieu-spec-code.md#g-04) chỉ số tài xế đóng băng | [T-04](#t-04) | ✅ xong | 2 |
 | ✅ [G-05](05-doi-chieu-spec-code.md#g-05) phí huỷ không ghi sổ| [T-05](#t-05) | P0 | 1 |
-| [G-06](05-doi-chieu-spec-code.md#g-06) outbox chưa nối | [T-06](#t-06) | P1 | 2 |
-| [G-07](05-doi-chieu-spec-code.md#g-07) surge = 1.0 | [T-07](#t-07) | P1 | 2 |
-| [G-08](05-doi-chieu-spec-code.md#g-08) mất giấy tờ | [T-08](#t-08) | P0 | 0 |
+| [G-06](05-doi-chieu-spec-code.md#g-06) outbox chưa nối | [T-06](#t-06) | ✅ xong | 2 |
+| [G-07](05-doi-chieu-spec-code.md#g-07) surge = 1.0 | [T-07](#t-07) | ✅ xong | 2 |
+| [G-08](05-doi-chieu-spec-code.md#g-08) mất giấy tờ | [T-08](#t-08) | ✅ xong | 0 |
 | ✅ [G-09](05-doi-chieu-spec-code.md#g-09) float trên tiền| [T-09](#t-09) | P0 | 1 |
-| [G-10](05-doi-chieu-spec-code.md#g-10) IdleSeconds sai | [T-10](#t-10) | P1 | 2 |
+| [G-10](05-doi-chieu-spec-code.md#g-10) IdleSeconds sai | [T-10](#t-10) | ✅ xong | 2 |
 | [G-11](05-doi-chieu-spec-code.md#g-11) không có push | [T-11](#t-11) | P1 | 3 |
 | ✅ [G-12](05-doi-chieu-spec-code.md#g-12) không có API ví| [T-12](#t-12) | P1 | 1 |
 | ✅ [G-13](05-doi-chieu-spec-code.md#g-13) không có audit log| [T-13](#t-13) | P1 | 1 |
-| [G-14](05-doi-chieu-spec-code.md#g-14) không recover | [T-14](#t-14) | P0 | 0 |
-| [G-15](05-doi-chieu-spec-code.md#g-15) rò rỉ rate limit | [T-15](#t-15) | P2 | 0 |
-| [G-16](05-doi-chieu-spec-code.md#g-16) lệch Version | [T-16](#t-16) | P2 | 0 |
-| [G-17](05-doi-chieu-spec-code.md#g-17) clock chưa tiêm | [T-17](#t-17) | P2 | 0 |
+| [G-14](05-doi-chieu-spec-code.md#g-14) không recover | [T-14](#t-14) | ✅ xong | 0 |
+| [G-15](05-doi-chieu-spec-code.md#g-15) rò rỉ rate limit | [T-15](#t-15) | ✅ xong | 0 |
+| [G-16](05-doi-chieu-spec-code.md#g-16) lệch Version | [T-16](#t-16) | ✅ xong | 0 |
+| [G-17](05-doi-chieu-spec-code.md#g-17) clock chưa tiêm | [T-17](#t-17) | ✅ xong | 0 |
 | [G-18](05-doi-chieu-spec-code.md#g-18) SUSPENDED chết | [T-24](#t-24) | P2 | 4 |
 | [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | P2 | 4 |
 | [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) | P1 | 3 |

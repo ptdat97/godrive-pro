@@ -130,10 +130,14 @@ func (e *Engine) Dispatch(ctx context.Context, tripID string) error {
 			case <-time.After(e.cfg.OfferTTL):
 			}
 		} else {
+			wait := e.cfg.EmptyRoundWait
+			if wait <= 0 {
+				wait = 2 * time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(2 * time.Second):
+			case <-time.After(wait):
 			}
 		}
 		t, err := e.trips.Get(ctx, tripID)

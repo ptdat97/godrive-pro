@@ -12,13 +12,21 @@
 ```
  GĐ 0        GĐ 1              GĐ 2              GĐ 3           GĐ 4          GĐ 5
 Sửa nền   Bền dữ liệu     Đúng nghiệp vụ    Hạ tầng thật    Thương mại   Quy mô
-~5n          ~12n              ~10n            ~15n            ~25n         (sau)
+  ✅           ✅                ✅              ~15n            ~25n         (sau)
   │            │                 │                │              │
   ▼            ▼                 ▼                ▼              ▼
 Chạy       Không mất        Ghép chuyến      Nhiều pod      Thu tiền     Tách
 được       tiền khi         và tính giá      thật, MQTT,    thật được    service
 Postgres   restart          đúng như spec    OSRM
 ```
+
+**GĐ 0, 1 và 2 đã hoàn thành và kiểm chứng.** Chi tiết từng việc: [07 — TODO](07-todo.md).
+Điều kiện hoàn thành của cả ba giai đoạn đều đã đạt — xem checklist bên dưới.
+
+> **Ước lượng thực tế so với kế hoạch:** ba giai đoạn đầu dự kiến ~27 ngày công. Phần khó nhất
+> không phải viết code mà là **tìm ra 7 lỗi không có trong bản đối chiếu ban đầu** — bốn trong số
+> đó là cuộc đua/lỗi thứ tự, chỉ lộ ra khi chạy `-race -count=N`. Nên tính thêm thời gian cho
+> việc này ở các giai đoạn sau, đặc biệt GĐ 3 (nhiều tiến trình, mạng thật).
 
 **Cột mốc chặn:** không sang GĐ 4 (thu tiền thật) khi GĐ 1 chưa xong. Ghi sổ trong RAM
 mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủi ro kỹ thuật.
@@ -92,7 +100,7 @@ mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủ
 
 ---
 
-## Giai đoạn 2 — Đúng nghiệp vụ (~10 ngày) · **P1** ← **đang tới**
+## Giai đoạn 2 — Đúng nghiệp vụ · ✅ **XONG** (2026-08-24)
 
 **Mục tiêu:** ghép chuyến và tính giá hành xử **đúng như spec mô tả**, không phải chỉ có mã nguồn giống.
 
@@ -107,15 +115,17 @@ mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủ
 
 ### Điều kiện hoàn thành
 
-- [ ] Tài xế từ chối 10 offer liên tiếp → `acceptance_rate` giảm → **rơi xuống cuối** danh sách chấm điểm
-- [ ] Chuyến ở khu vực không có tài xế → 3 vòng nới bán kính 1500/3000/4500m → `EXPIRED` — **có test**
-- [ ] Tăng mật độ request trong một ô lưới → surge tăng theo bậc thang, **không bao giờ vượt 2.0** — có test boundary
-- [ ] Giết tiến trình giữa lúc ghi sổ → khởi động lại → outbox relay publish nốt, sổ cái đúng
-- [ ] `offers_one_accepted_per_trip` thực sự chặn được (test cố tình ghi 2 offer `ACCEPTED`)
+- [x] Tài xế từ chối 10 offer liên tiếp → `acceptance_rate` giảm → **rơi xuống cuối** danh sách chấm điểm
+- [x] Chuyến ở khu vực không có tài xế → 3 vòng nới bán kính 1500/3000/4500m → `EXPIRED` — **có test**
+- [x] Tăng mật độ request trong một ô lưới → surge tăng theo bậc thang, **không bao giờ vượt 2.0** — có test boundary
+- [x] *(phát sinh)* Tài xế không còn kẹt `ON_TRIP` sau khi hoàn tất chuyến — `TestDriverStatusAfterBackToBackStartComplete`
+- [x] *(phát sinh)* Tắt êm không làm mất sự kiện đang xếp lịch — `eventbus` dùng đúng `WaitGroup`
+- [x] Giết tiến trình giữa lúc ghi sổ → khởi động lại → outbox relay publish nốt, sổ cái đúng
+- [x] `offers_one_accepted_per_trip` thực sự chặn được (test cố tình ghi 2 offer `ACCEPTED`)
 
 ---
 
-## Giai đoạn 3 — Hạ tầng thật (~15 ngày) · **P1**
+## Giai đoạn 3 — Hạ tầng thật (~15 ngày) · **P1** ← **đang tới**
 
 **Mục tiêu:** chạy nhiều pod. Đây là chỗ *"đổi implementation, không sửa nghiệp vụ"* của spec §8 nhóm B.
 
