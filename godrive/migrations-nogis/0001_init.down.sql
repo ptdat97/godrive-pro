@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS outbox;
+DROP TABLE IF EXISTS idempotency_keys;
+DROP TABLE IF EXISTS ledger_transactions;
+DROP TABLE IF EXISTS ledger_entries;
+DROP TABLE IF EXISTS offers;
+DROP TABLE IF EXISTS trip_events;
+DROP TABLE IF EXISTS trips;
+DROP TABLE IF EXISTS driver_locations;
+DROP TABLE IF EXISTS drivers;
+DROP TABLE IF EXISTS accounts;

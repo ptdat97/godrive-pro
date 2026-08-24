@@ -1,0 +1,14 @@
+# Bí mật cục bộ — không bao giờ commit.
+.env
+.env.local
+
+# Kết quả build
+bin/
+*.test
+*.out
+coverage.*
+
+# Công cụ / hệ điều hành
+.DS_Store
+.idea/
+.vscode/

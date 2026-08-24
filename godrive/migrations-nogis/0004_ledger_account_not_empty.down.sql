@@ -1,0 +1,2 @@
+ALTER TABLE ledger_transactions DROP CONSTRAINT IF EXISTS ledger_transactions_tx_id_not_empty;
+ALTER TABLE ledger_entries DROP CONSTRAINT IF EXISTS ledger_entries_account_id_not_empty;

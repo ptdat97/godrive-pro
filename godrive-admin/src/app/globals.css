@@ -1,0 +1,19 @@
+@import "tailwindcss";
+/* Leaflet nạp từ node_modules (không phải CDN) — giữ toàn bộ tài nguyên
+   cùng nguồn gốc và không phụ thuộc bên thứ ba lúc chạy. */
+@import "leaflet/dist/leaflet.css";
+
+/* Giao diện quản trị cố định nền sáng: bảng số liệu vận hành cần độ tương phản
+   ổn định, không đổi theo thiết lập hệ điều hành của từng máy. */
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Số liệu trong bảng dùng chữ số đều nhau để cột không nhảy khi làm mới. */
+table {
+  font-variant-numeric: tabular-nums;
+}

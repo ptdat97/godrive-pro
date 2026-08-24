@@ -1,0 +1,44 @@
+# Hạ tầng phát triển cục bộ.
+# Ứng dụng vẫn chạy được mà KHÔNG cần các dịch vụ này (chế độ in-memory).
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: godrive
+      POSTGRES_PASSWORD: godrive
+      POSTGRES_DB: godrive
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U godrive"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js"]          # bật JetStream để có at-least-once
+    ports: ["4222:4222", "8222:8222"]
+
+  emqx:
+    image: emqx/emqx:5.6
+    # MQTT cho luồng vị trí tài xế: tiết kiệm pin và băng thông hơn WebSocket
+    ports: ["1883:1883", "18083:18083"]
+
+  osrm:
+    # Chuẩn bị dữ liệu trước:
+    #   wget http://download.geofabrik.de/asia/vietnam-latest.osm.pbf
+    #   docker run -t -v "$PWD/osrm:/data" osrm/osrm-backend \
+    #     osrm-extract -p /opt/motorcycle.lua /data/vietnam-latest.osm.pbf
+    image: osrm/osrm-backend:latest
+    command: ["osrm-routed", "--algorithm", "mld", "/data/vietnam-latest.osrm"]
+    volumes: ["./osrm:/data"]
+    ports: ["5000:5000"]
+    profiles: ["routing"]
+
+volumes:
+  pgdata:
