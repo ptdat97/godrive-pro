@@ -18,7 +18,7 @@ import (
 // panicETA mô phỏng một implementation Port bị lỗi: nó panic thay vì trả lỗi.
 type panicETA struct{}
 
-func (panicETA) ETASeconds(context.Context, geo.Point, geo.Point) (float64, error) {
+func (panicETA) ETASeconds(context.Context, []geo.Point, geo.Point) ([]float64, error) {
 	panic("ETAEngine hỏng")
 }
 

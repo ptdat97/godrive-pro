@@ -2,6 +2,8 @@ package httpx
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -77,5 +79,40 @@ func TestRateLimitSweepIsRateLimited(t *testing.T) {
 	rl.Allow("d")
 	if got := rl.Len(); got != 2 {
 		t.Fatalf("chưa tới chu kỳ quét kế tiếp thì không được quét lại, có %d bucket", got)
+	}
+}
+
+// Endpoint vận hành KHÔNG được rate limit.
+//
+// Chặn chúng là cách tự tạo sự cố dây chuyền: pod tải cao → health check bị
+// chặn → orchestrator giết pod → tải dồn sang pod còn lại → lặp lại.
+func TestOperationalPathsBypassRateLimit(t *testing.T) {
+	for _, p := range []string{"/healthz", "/readyz", "/metrics"} {
+		if !IsOperationalPath(p) {
+			t.Fatalf("%s phải được miễn rate limit", p)
+		}
+	}
+	for _, p := range []string{"/v1/trips", "/v1/auth/otp", "/", "/healthz/x"} {
+		if IsOperationalPath(p) {
+			t.Fatalf("%s KHÔNG được miễn rate limit", p)
+		}
+	}
+
+	clk := clock.NewMock(time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC))
+	rl := NewRateLimit(1, 1)
+	rl.Clock = clk
+	h := rl.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	// Dùng hết hạn mức bằng một request thường.
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/v1/trips", nil))
+	}
+	// Health check vẫn phải qua.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/healthz", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("/healthz phải qua kể cả khi đã hết hạn mức, được %d", w.Code)
 	}
 }

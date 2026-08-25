@@ -41,9 +41,10 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `LOG_JSON` | `false` | JSON log cho production |
 | **`DATABASE_URL`** | *(rỗng)* | **rỗng ⇒ chạy toàn bộ bằng bộ nhớ.** Có giá trị ⇒ dùng Postgres cho `drivers`+`trips` |
-| `REDIS_URL` | *(rỗng)* | **đọc vào config nhưng chưa dùng ở đâu** |
-| `NATS_URL` | *(rỗng)* | **chưa dùng** |
-| `MQTT_URL` | *(rỗng)* | **chưa dùng** |
+| **`REDIS_URL`** | *(rỗng)* | Rỗng ⇒ chỉ mục vị trí, khoá giành chuyến, lời mời, báo giá, khoá idempotency và rate limit nằm trong **bộ nhớ tiến trình** ⇒ **chỉ chạy đúng 1 bản sao**. Bắt buộc ở production |
+| `OSRM_URL` | *(rỗng)* | Rỗng ⇒ dùng ước lượng haversine (đường chim bay × 1.35). Sai số đi thẳng vào giá cước |
+| `NATS_URL` | *(rỗng)* | **chưa dùng** — GĐ 3 còn lại |
+| `MQTT_URL` | *(rỗng)* | **chưa dùng** — GĐ 3 còn lại |
 | `JWT_SECRET` | `dev-secret-doi-truoc-khi-len-production` | khoá ký HS256 |
 | `ACCESS_TTL` | `24h` | hạn token |
 | `DEV_AUTH` | `true` | trả mã OTP trong response **và mở `POST /v1/drivers/me/topup`** — chỉ dev |
@@ -60,6 +61,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `JWT_SECRET` rỗng hoặc bắt đầu bằng `dev-` | `JWT_SECRET phải được đặt ở môi trường production` |
 | `DEV_AUTH` còn bật | `DEV_AUTH phải tắt ở production` |
 | `DATABASE_URL` rỗng | `DATABASE_URL bắt buộc ở production` |
+| `REDIS_URL` rỗng | `REDIS_URL bắt buộc ở production (nếu không sẽ chỉ chạy được 1 bản sao)` |
 
 > Đây là chốt chặn tốt nhưng **chưa đủ**: `ADMIN_PHONES` rỗng ở production chỉ log warning
 > chứ không chặn khởi động. Cân nhắc nâng thành lỗi cứng.
@@ -129,10 +131,10 @@ bất kỳ dịch vụ nào trong này**.
 | Dịch vụ | Image | Cổng | Đã nối vào code? |
 |---|---|---|---|
 | `postgres` | `postgis/postgis:16-3.4` | 5432 | ✅ `accounts`, `drivers`, `trips`, `trip_events`, `offers`, `trip_claims`, sổ cái, outbox, nhật ký admin |
-| `redis` | `redis:7-alpine` (AOF) | 6379 | ❌ chưa |
+| `redis` | `redis:7-alpine` (AOF) | 6379 | ✅ chỉ mục vị trí, khoá chuyến, lời mời, báo giá, idempotency, rate limit |
 | `nats` | `nats:2.10-alpine` (`-js`) | 4222, 8222 | ❌ chưa |
 | `emqx` | `emqx/emqx:5.6` | 1883, 18083 | ❌ chưa |
-| `osrm` | `osrm/osrm-backend` | 5000 | ❌ chưa (profile `routing`) |
+| `osrm` | `osrm/osrm-backend` | 5000 | ✅ đặt `OSRM_URL` để bật (profile `routing`) |
 
 Chuẩn bị dữ liệu OSRM trước khi bật profile `routing`:
 
@@ -293,7 +295,31 @@ ORDER BY 2;
 - [ ] `TaxPermille` chỉ bật **sau khi kế toán thuế xác nhận**
 
 ### Vận hành
-- [ ] Metric + cảnh báo đã chạy ([T-25](07-todo.md#t-25)): outbox tồn đọng · sổ cái lệch · `trips_expired` tăng vọt
+- [x] `/metrics` phát số liệu Prometheus; `/readyz` kiểm thật DB + Redis ✅ GĐ 3
+- [ ] Đã cấu hình cảnh báo trên các số liệu sau (xem §8.9)
 - [ ] `SHUTDOWN_WAIT` ≥ 60s **hoặc** đã có job dọn chuyến kẹt `SEARCHING` (xem §8.5)
 - [ ] Runbook cho: sổ cái lệch · cổng thanh toán chết · OSRM chết · Redis chết
 - [ ] Load test riêng module `matching` — spec §8 nhóm C #13 gọi đây là điểm nghẽn đầu tiên
+
+
+---
+
+## 8.9 Số liệu và ngưỡng cảnh báo
+
+`GET /metrics` phát định dạng Prometheus. Những số liệu đáng đặt cảnh báo nhất:
+
+| Số liệu | Loại | Cảnh báo khi |
+|---|---|---|
+| `godrive_outbox_dead` | gauge | **> 0** — sự kiện nghiệp vụ đã mất. Đây là cảnh báo quan trọng nhất trong cả hệ thống |
+| `godrive_outbox_pending` | gauge | > 100 hoặc tăng đều — relay chết hoặc bus hỏng |
+| `godrive_trip_dispatch_seconds` | histogram | p95 > 30s — khách chờ quá lâu để được ghép |
+| `godrive_trips_searching` | gauge | tăng đều mà `godrive_drivers_idle` không tăng — thiếu cung |
+| `godrive_offers_total{outcome}` | counter | tỉ lệ `accepted/created` giảm — chất lượng ghép chuyến đi xuống |
+| `godrive_settle_errors_total` | counter | **> 0** — có chuyến không ghi sổ được |
+| `godrive_surge_permille` | histogram | p99 chạm 2000 kéo dài — thiếu cung nghiêm trọng |
+| `godrive_http_request_duration_seconds` | histogram | p99 > 1s |
+| Bất kỳ gauge nào **= −1** | — | Phép đo lỗi (không đọc được DB/Redis), khác hẳn với "thật sự bằng 0" |
+
+> **Nhãn có số giá trị hữu hạn.** `route` được đưa về khuôn mẫu (`/v1/trips/{id}`) trước khi làm
+> nhãn. Đưa thẳng `URL.Path` vào nhãn là cách chắc chắn làm nổ Prometheus: mỗi chuyến đi sẽ tạo một
+> chuỗi số liệu mới và không bao giờ được thu hồi.

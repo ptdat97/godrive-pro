@@ -23,6 +23,7 @@ import (
 	"github.com/example/godrive/internal/platform/authn"
 	"github.com/example/godrive/internal/platform/eventbus"
 	"github.com/example/godrive/internal/platform/httpx"
+	"github.com/example/godrive/internal/platform/redisx"
 	"github.com/example/godrive/internal/pricing"
 	"github.com/example/godrive/internal/trip"
 	"github.com/example/godrive/internal/wallet"
@@ -49,6 +50,10 @@ type App struct {
 	Surge    *pricing.DemandSurge
 	// Outbox khác nil ở chế độ Postgres. StartWorkers tự chạy relay.
 	Outbox *outbox.PostgresStore
+	// Redis khác nil khi có REDIS_URL. Không có thì các store nóng chạy bằng
+	// bộ nhớ tiến trình và hệ thống chỉ đúng với một bản sao.
+	Redis   *redisx.Client
+	Metrics *appMetrics
 
 	adminAuth *admin.Auth
 	db        *sql.DB
@@ -66,6 +71,15 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 // phải ngủ thật: cửa sổ huỷ miễn phí 2 phút, hạn báo giá 5 phút, độ tươi ping 45 giây.
 func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, error) {
 	bus := eventbus.NewInMemory(log)
+
+	var rdb *redisx.Client
+	if cfg.RedisURL != "" {
+		c, err := redisx.New(cfg.RedisURL)
+		if err != nil {
+			return nil, err
+		}
+		rdb = c
+	}
 	issuer := authn.NewIssuer(cfg.JWTSecret, cfg.AccessTTL)
 
 	var (
@@ -104,18 +118,56 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		tripRepo.(*trip.PostgresRepo).UseOutbox(obx)
 	}
 
+	// Store NÓNG: Redis nếu có, ngược lại bộ nhớ tiến trình.
+	//
+	// Đây chính là ranh giới giữa "chạy được một bản sao" và "chạy được nhiều
+	// bản sao": năm loại dữ liệu dưới đây phải được chia sẻ giữa các pod, nếu
+	// không mỗi pod sẽ thấy một thế giới khác nhau.
+	var (
+		locIdx     location.Index
+		quoteStore pricing.QuoteStore
+		idemStore  idem.Store
+		offerStore matching.Store
+	)
+	if rdb != nil {
+		locIdx = location.NewRedisIndex(rdb.Raw(), redisx.KeyPrefix, clk)
+		quoteStore = pricing.NewRedisQuoteStore(rdb.Raw(), redisx.KeyPrefix)
+		idemStore = idem.NewRedisStore(rdb.Raw(), redisx.KeyPrefix)
+		offerStore = matching.NewRedisStore(rdb.Raw(), redisx.KeyPrefix, clk)
+	} else {
+		locIdx = location.NewMemoryIndex(clk)
+		quoteStore = pricing.NewMemoryQuoteStore()
+		idemStore = idem.NewMemoryStore()
+		offerStore = matching.NewMemoryStore(clk)
+		if !cfg.InMemory() {
+			log.Warn("chưa cấu hình REDIS_URL: chỉ mục vị trí, báo giá, khoá idempotency và lời mời "+
+				"nằm trong bộ nhớ tiến trình — CHỈ chạy đúng với 1 bản sao",
+				"in_memory", "location.index, pricing.quotes, idem.keys, matching.offers")
+		}
+	}
+
 	otpSender := notification.LogOTPSender{Log: log}
 	identitySvc := identity.NewService(idRepo, otpSender, issuer, clk)
 	identitySvc.DevMode = cfg.DevAuth
 
 	driverSvc := driver.NewService(driverRepo, bus, clk)
-	locIndex := location.NewMemoryIndex(clk)
-	locSvc := location.NewService(locIndex, driverSvc, clk)
+	locSvc := location.NewService(locIdx, driverSvc, clk)
 
-	surge := pricing.NewDemandSurge(idleCounter{idx: locIndex})
-	pricingSvc := pricing.NewService(pricing.NewHaversineEngine(), surge, pricing.NewMemoryQuoteStore(), clk)
+	// Máy chỉ đường: OSRM nếu có, ngược lại ước lượng haversine.
+	//
+	// Cả hai đều có ĐƯỜNG LÙI về haversine khi OSRM lỗi: báo giá và ghép chuyến
+	// nằm trên request path, thà ước lượng thô còn hơn không phục vụ được.
+	var routeEngine pricing.RouteEngine = pricing.NewHaversineEngine()
+	var etaEngine matching.ETAEngine = matching.NewSimpleETA()
+	if cfg.OSRMURL != "" {
+		routeEngine = pricing.NewOSRMEngine(cfg.OSRMURL, pricing.NewHaversineEngine())
+		etaEngine = matching.NewOSRMETA(cfg.OSRMURL, matching.NewSimpleETA())
+	}
 
-	tripSvc := trip.NewService(tripRepo, pricingSvc, bus, idem.NewMemoryStore(), clk)
+	surge := pricing.NewDemandSurge(idleCounter{loc: locSvc})
+	pricingSvc := pricing.NewService(routeEngine, surge, quoteStore, clk)
+
+	tripSvc := trip.NewService(tripRepo, pricingSvc, bus, idemStore, clk)
 
 	var ledger wallet.Ledger = wallet.NewMemoryLedger()
 	if db != nil {
@@ -130,22 +182,16 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	// Cho phép tài xế tự thoát khỏi trạng thái kẹt khi không còn chuyến nào chạy.
 	driverSvc.UseTripPort(tripSvc)
 
-	var offerStore matching.Store = matching.NewMemoryStore(clk)
-	if db != nil {
+	// Redis được ưu tiên cho lời mời và khoá chuyến (dữ liệu nóng, sống ngắn).
+	// Không có Redis thì dùng Postgres — ở đó `offers_one_accepted_per_trip`
+	// vẫn là chốt chặn cuối.
+	if rdb == nil && db != nil {
 		offerStore = matching.NewPostgresStore(db, clk)
 	}
 	matcher := matching.NewEngine(
 		matching.DefaultConfig(), locSvc, driverSvc, tripSvc,
-		offerStore, matching.NewSimpleETA(), walletSvc, bus, clk,
+		offerStore, etaEngine, walletSvc, bus, clk,
 	)
-
-	if !cfg.InMemory() {
-		// Trung thực về những gì CHƯA bền: sổ cái, lời mời, chỉ mục vị trí, báo
-		// giá và khoá idempotency vẫn nằm trong bộ nhớ tiến trình, kể cả khi đã
-		// có DATABASE_URL. Vì vậy hiện chỉ được chạy đúng MỘT bản sao.
-		log.Warn("một số store vẫn ở bộ nhớ dù đã bật Postgres — chỉ chạy 1 bản sao",
-			"in_memory", "location.index, pricing.quotes, pricing.surge, idem.keys")
-	}
 
 	var auditLog admin.AuditLog = admin.NewMemoryAuditLog()
 	if db != nil {
@@ -157,17 +203,23 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		log.Warn("chưa cấu hình ADMIN_PHONES: bảng điều khiển vận hành sẽ từ chối mọi đăng nhập")
 	}
 
-	return &App{
+	app := &App{
 		Cfg: cfg, Log: log, Clock: clk, Bus: bus, Issuer: issuer,
 		Identity: identitySvc, Drivers: driverSvc, Location: locSvc,
 		Pricing: pricingSvc, Trips: tripSvc, Wallet: walletSvc, Matcher: matcher,
 		Admin: adminSvc, Surge: surge, Outbox: obx, adminAuth: adminAuth,
+		Redis: rdb, Metrics: newAppMetrics(),
 		db: db,
-	}, nil
+	}
+	app.registerGauges()
+	return app, nil
 }
 
 func (a *App) Close() error {
 	a.Bus.Close()
+	if a.Redis != nil {
+		_ = a.Redis.Close()
+	}
 	if a.db != nil {
 		return a.db.Close()
 	}
@@ -191,9 +243,14 @@ func (a *App) driverIDFromRequest(r *http.Request) (string, error) {
 func (a *App) Router() http.Handler {
 	mux := http.NewServeMux()
 
+	// /healthz = liveness: tiến trình còn sống không ("có cần restart không").
+	// /readyz  = readiness: phụ thuộc còn dùng được không ("có nên nhận việc không").
+	// Gộp hai thứ này làm một sẽ khiến pod bị restart mỗi khi CSDL chậm.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok", "env": a.Cfg.Env})
 	})
+	mux.HandleFunc("GET /readyz", a.readyz)
+	mux.Handle("GET /metrics", a.Metrics.reg.Handler())
 
 	identity.NewHandler(a.Identity).Register(mux)
 	driver.NewHandler(a.Drivers, a.Issuer).Register(mux)
@@ -206,21 +263,34 @@ func (a *App) Router() http.Handler {
 	admin.NewHandler(a.Admin, a.Issuer, a.adminAuth).Register(mux)
 
 	// 30 request/giây, burst 60 cho mỗi IP.
-	rl := httpx.NewRateLimit(30, 60)
+	// Rate limit toàn cụm khi có Redis: bản in-process cho mỗi pod một hạn mức
+	// riêng, nên chạy 5 pod nghĩa là kẻ tấn công được gấp 5 lần hạn mức.
+	var rateLimit httpx.Middleware
+	if a.Redis != nil {
+		rateLimit = httpx.NewRedisRateLimit(a.Redis.Raw(), redisx.KeyPrefix, 30, 60).Middleware()
+	} else {
+		rateLimit = httpx.NewRateLimit(30, 60).Middleware()
+	}
 	return httpx.Chain(mux,
 		httpx.RequestID(),
 		httpx.Logging(a.Log),
+		a.metricsMiddleware(),
 		httpx.Recover(),
-		rl.Middleware(),
+		rateLimit,
 	)
 }
 
 // idleCounter nối chỉ mục vị trí vào bộ tính surge.
-type idleCounter struct{ idx *location.MemoryIndex }
+//
+// Đi qua location.Service chứ không qua Index trực tiếp, để bộ đếm cung dùng
+// đúng ngưỡng độ tươi mà dispatcher dùng — nếu không, surge sẽ đếm cả những
+// tài xế mà dispatcher đã coi là mất kết nối.
+type idleCounter struct{ loc *location.Service }
 
 func (i idleCounter) IdleCount(ctx context.Context, at pointT, radiusM float64) (int, error) {
-	snaps, err := i.idx.Nearby(ctx, at, radiusM, location.Filter{
-		Statuses: []driver.Status{driver.StatusIdle},
+	snaps, err := i.loc.Nearby(ctx, at, radiusM, location.Filter{
+		Statuses:    []driver.Status{driver.StatusIdle},
+		FreshWithin: location.StaleAfter,
 	})
 	return len(snaps), err
 }

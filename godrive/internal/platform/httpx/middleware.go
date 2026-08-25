@@ -177,6 +177,10 @@ func (rl *RateLimit) Allow(key string) bool {
 func (rl *RateLimit) Middleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if IsOperationalPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if !rl.Allow(clientIP(r)) {
 				Fail(w, r, errs.E(errs.KindRateLimited, "rate_limited",
 					"Bạn thao tác quá nhanh, vui lòng thử lại sau."))
@@ -185,6 +189,20 @@ func (rl *RateLimit) Middleware() Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// IsOperationalPath cho biết đường dẫn thuộc nhóm vận hành, KHÔNG được rate limit.
+//
+// Rate limit các endpoint này là một cách tự tạo sự cố dây chuyền: pod chịu tải
+// cao thì health check bị chặn, orchestrator tưởng pod chết nên giết đi, tải dồn
+// sang pod còn lại, rồi đến lượt chúng cũng bị giết. Prometheus scrape đều đặn
+// cũng không được coi là lạm dụng.
+func IsOperationalPath(path string) bool {
+	switch path {
+	case "/healthz", "/readyz", "/metrics":
+		return true
+	}
+	return false
 }
 
 func clientIP(r *http.Request) string {

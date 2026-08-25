@@ -111,6 +111,8 @@ SUSPENDED  ◄── (⚠️ KHÔNG có code path nào đặt trạng thái này
   → không viết được test tất định cho lọc độ tươi
 - 🟡 `ReasonSpeedOutlier` khai báo nhưng **không có code nào gán** — spec §5.2 nói có 3 loại cờ, thực tế 2
 - 🟡 Cờ gian lận gom in-memory, mất khi restart; không có ngưỡng tự động khoá
+- ✅ `RedisIndex` — `GEOADD`/`GEOSEARCH` cho toạ độ + HASH có TTL cho thuộc tính lọc.
+  TTL của HASH chính là cơ chế hết hạn: tài xế mất mạng tự rơi khỏi tập ứng viên, không cần job dọn
 - 🔵 MQTT chưa có — hiện chỉ có `POST /v1/locations/ping` (HTTP)
 
 ---
@@ -276,7 +278,8 @@ hai tài xế nhận hai chuyến của nhau. Verify bởi `TestOnlyOneDriverWin
 - ✅ ~~`go Matcher.Dispatch(...)` không có `recover()`~~ — đã bọc `safego.Recover` ở GĐ 0, cleanup đẩy chuyến về `EXPIRED` thay vì để kẹt `SEARCHING`
 - 🟡 `Dispatch` không giới hạn số goroutine đồng thời, không backpressure
 - 🟡 `candidates()` gọi `drivers.Get()` **cho từng ứng viên** (N+1) — sẽ đau khi lên Postgres
-- 🟡 `SimpleETA` gọi từng cặp; production cần OSRM `/table` một request cho cả lô
+- ✅ `OSRMETA` dùng `/table`: **một request cho cả lô**, cache theo cặp ô lưới, có đường lùi haversine.
+  Đây là quyết định về **chi phí** — dịch vụ bản đồ tính tiền theo request
 - 🔵 Không có `PostgresRepo` cho `offers`
 
 ---

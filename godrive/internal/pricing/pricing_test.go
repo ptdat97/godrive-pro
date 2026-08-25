@@ -32,8 +32,12 @@ func (f fixedSurge) SurgePermille(context.Context, geo.Point, time.Time) (int64,
 }
 
 func newSvc(r Route, surgePermille int64, at time.Time) (*Service, *clock.Mock) {
+	return newSvcWithRoutes(fixedRoute{r}, surgePermille, at)
+}
+
+func newSvcWithRoutes(re RouteEngine, surgePermille int64, at time.Time) (*Service, *clock.Mock) {
 	clk := clock.NewMock(at)
-	return NewService(fixedRoute{r}, fixedSurge{surgePermille}, NewMemoryQuoteStore(), clk), clk
+	return NewService(re, fixedSurge{surgePermille}, NewMemoryQuoteStore(), clk), clk
 }
 
 // vnTime dựng thời điểm theo giờ Việt Nam (UTC+7).

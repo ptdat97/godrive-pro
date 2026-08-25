@@ -19,7 +19,11 @@ func NewSimpleETA() *SimpleETA {
 	return &SimpleETA{DetourFactor: 1.35, SpeedKph: 18}
 }
 
-func (s *SimpleETA) ETASeconds(_ context.Context, from, to geo.Point) (float64, error) {
-	d := geo.DistanceM(from, to) * s.DetourFactor
-	return d / (s.SpeedKph * 1000 / 3600), nil
+func (s *SimpleETA) ETASeconds(_ context.Context, from []geo.Point, to geo.Point) ([]float64, error) {
+	out := make([]float64, len(from))
+	for i, p := range from {
+		d := geo.DistanceM(p, to) * s.DetourFactor
+		out[i] = d / (s.SpeedKph * 1000 / 3600)
+	}
+	return out, nil
 }

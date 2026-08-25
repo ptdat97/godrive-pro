@@ -17,9 +17,14 @@ type Config struct {
 
 	// DatabaseURL rỗng => chạy toàn bộ bằng bộ nhớ (chế độ dev).
 	DatabaseURL string
-	RedisURL    string
-	NATSURL     string
-	MQTTURL     string
+	// RedisURL rỗng => chỉ mục vị trí, báo giá, khoá idempotency và rate limit
+	// nằm trong bộ nhớ tiến trình, tức là CHỈ chạy đúng với một bản sao.
+	RedisURL string
+	NATSURL  string
+	MQTTURL  string
+	// OSRMURL rỗng => dùng ước lượng haversine (đường chim bay × hệ số uốn khúc).
+	// Sai số của ước lượng đó đi thẳng vào giá cước khách trả.
+	OSRMURL string
 
 	JWTSecret    string
 	AccessTTL    time.Duration
@@ -45,6 +50,7 @@ func Load() (Config, error) {
 		RedisURL:      get("REDIS_URL", ""),
 		NATSURL:       get("NATS_URL", ""),
 		MQTTURL:       get("MQTT_URL", ""),
+		OSRMURL:       get("OSRM_URL", ""),
 		JWTSecret:     get("JWT_SECRET", "dev-secret-doi-truoc-khi-len-production"),
 		AccessTTL:     getDur("ACCESS_TTL", 24*time.Hour),
 		DevAuth:       getBool("DEV_AUTH", true),
@@ -61,6 +67,12 @@ func Load() (Config, error) {
 		}
 		if c.DatabaseURL == "" {
 			return c, fmt.Errorf("config: DATABASE_URL bắt buộc ở production")
+		}
+		// Không có Redis thì năm loại dữ liệu nóng nằm trong bộ nhớ tiến trình:
+		// hai pod sẽ thấy hai thế giới khác nhau, và chống ghép trùng chỉ còn
+		// đúng trong phạm vi một tiến trình.
+		if c.RedisURL == "" {
+			return c, fmt.Errorf("config: REDIS_URL bắt buộc ở production (nếu không sẽ chỉ chạy được 1 bản sao)")
 		}
 	}
 	return c, nil

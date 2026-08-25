@@ -26,8 +26,20 @@
      └───────────────────────┴───────────────────────┘
 ```
 
-**Đã dựng ở môi trường dev:** Postgres 18.4 + PostGIS 3.6.3 (cổng 5432, database `godrive`),
-Redis 6379 (**chưa nối vào code**). Schema tạo được qua [`scripts/setup-db.sh`](../godrive/scripts/setup-db.sh).
+**Đã dựng ở môi trường dev:** Postgres 18.4 + PostGIS 3.6.3 (cổng 5432, database `godrive`) và
+Redis 6379 — **cả hai đều đã nối vào code và kiểm chứng đầu-cuối**.
+Schema tạo được qua [`scripts/setup-db.sh`](../godrive/scripts/setup-db.sh).
+
+### Dữ liệu nằm ở đâu, và vì sao
+
+| | Postgres | Redis |
+|---|---|---|
+| Giữ gì | tài khoản, tài xế, chuyến, `trip_events`, **sổ cái**, offers, nhật ký admin, outbox | vị trí tài xế (GEO), khoá giành chuyến, lời mời, báo giá, khoá idempotency, bộ đếm rate limit |
+| Đặc điểm | ghi vừa phải, sống lâu, **phải bền** | ghi rất nhiều, sống rất ngắn (15 giây – 5 phút) |
+| Mất thì sao | **mất dữ liệu** | mất hiệu năng, không mất dữ liệu |
+
+Chính Redis là thứ gỡ bỏ ràng buộc "chỉ chạy được một bản sao": trước khi có nó, sáu loại dữ liệu
+trên nằm trong bộ nhớ tiến trình nên hai pod thấy hai thế giới khác nhau.
 
 ---
 

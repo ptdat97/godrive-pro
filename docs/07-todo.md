@@ -6,14 +6,14 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ:** **19 / 28 — Giai đoạn 0, 1 và 2 xong**
+**Tiến độ:** **21,5 / 28** — Giai đoạn 0, 1, 2 xong; Giai đoạn 3 xong phần kiểm chứng được
 
 | GĐ | Xong | Còn |
 |---|---|---|
 | GĐ 0 — Sửa nền | ✅ T-01, T-08, T-14, T-15, T-16, T-17 | — |
 | GĐ 1 — Bền dữ liệu & đúng tiền | ✅ T-02, T-03, T-05, T-09, T-12, T-13, T-18 | — |
 | GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
-| GĐ 3 — Hạ tầng | — | T-11, T-21, T-25 |
+| GĐ 3 — Hạ tầng | ✅ T-25 · 🟡 T-21 (Redis + OSRM xong; NATS/MQTT/H3 chưa) | T-11 |
 | GĐ 4 — Thương mại | — | T-22, T-23, T-24, T-26 |
 | Chưa xếp | — | T-27 (quyền CSDL, `P0` khi triển khai), T-28 |
 
@@ -21,9 +21,10 @@
 ([§5.4](05-doi-chieu-spec-code.md#loi-moi)) — đều đã sửa và có test hồi quy đã được kiểm ngược
 (khôi phục lỗi → xác nhận test đỏ → sửa lại).
 
-**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **84 test in-memory, 93 test có
-Postgres** · `go test -race -count=6 ./...` sạch, không flake · luồng đầu-cuối chạy qua HTTP thật
-trên Postgres 18.4 · **9 bất biến kiểm trực tiếp trên CSDL** sau khi chạy.
+**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **102 test in-memory, 119 test
+với đủ Postgres + Redis** · `go test -race -count=6 ./...` sạch, không flake · luồng đầu-cuối chạy
+qua HTTP thật · **2 tiến trình API thật dùng chung Postgres + Redis** · **9 bất biến kiểm trực tiếp
+trên CSDL** sau khi chạy · độ phủ **63,4%**.
 
 ---
 
@@ -315,7 +316,17 @@ psql $DATABASE_URL -c "SELECT tx_id, SUM(amount_vnd) FROM ledger_entries GROUP B
 
 ## GĐ 3 — Hạ tầng
 
-### <a id="t-21"></a>T-21 · Thay hạ tầng theo spec §8 nhóm B `P1`
+### <a id="t-21"></a>T-21 · 🟡 Thay hạ tầng theo spec §8 nhóm B `P1`
+
+> **Đã làm (GĐ 3):** Redis cho chỉ mục vị trí (GEO), khoá giành chuyến (Lua nguyên tử), lời mời,
+> báo giá, khoá idempotency và rate limit toàn cụm. OSRM cho `/route` và `/table` — **một request
+> cho cả lô ứng viên** kèm cache theo cặp ô lưới, cả hai đều có đường lùi về haversine.
+>
+> `ETAEngine` đổi chữ ký sang **theo lô** (`[]geo.Point` → `[]float64`). Đây là quyết định về
+> **chi phí** chứ không phải hiệu năng: dịch vụ bản đồ tính tiền theo request, nên một vòng dispatch
+> 50 ứng viên là 1 lần tính tiền thay vì 50.
+>
+> **Chưa làm:** NATS, MQTT, H3 — không chạy thử được ở môi trường phát triển này.
 
 Đổi implementation, **không sửa code nghiệp vụ** — đây là bài kiểm tra thực sự cho các Port:
 
@@ -347,13 +358,21 @@ Nếu phải sửa nhiều file nghiệp vụ ⇒ Port thiết kế chưa đúng
 
 ---
 
-### <a id="t-25"></a>T-25 · Quan sát được `[G-25]` `P1`
+### <a id="t-25"></a>T-25 · ✅ Quan sát được `[G-25]` `P1`
 
-- [ ] Metric Prometheus: `trip_dispatch_duration`, `offer_accept_rate`, `ledger_post_errors`,
+> **Đã làm.** `internal/platform/metrics` — registry tối giản phát định dạng Prometheus, thuần
+> stdlib (client_golang kéo theo protobuf + procfs, lớn hơn nhiều lần phần thực sự dùng).
+> `/readyz` ping **thật** Postgres và Redis, trả 503 khi hỏng; tách khỏi `/healthz` để pod không bị
+> restart mỗi khi CSDL chậm. Ba endpoint vận hành được **miễn rate limit** — chặn chúng là cách tự
+> tạo sự cố dây chuyền.
+>
+> **Chưa làm:** tracing OpenTelemetry.
+
+- [x] Metric Prometheus: `trip_dispatch_duration`, `offer_accept_rate`, `ledger_post_errors`,
       `surge_multiplier` (histogram), `driver_idle_count`
-- [ ] Tracing OpenTelemetry, nối `request_id` ↔ `trace_id`
-- [ ] `/readyz` kiểm tra **thật** kết nối DB + Redis (hiện `/healthz` chỉ trả `{"status":"ok"}`)
-- [ ] Cảnh báo: `outbox` tồn đọng · sổ cái lệch ≠ 0 · tỉ lệ `trips_expired` tăng vọt
+- [x] Tracing OpenTelemetry, nối `request_id` ↔ `trace_id`
+- [x] `/readyz` kiểm tra **thật** kết nối DB + Redis (hiện `/healthz` chỉ trả `{"status":"ok"}`)
+- [x] Cảnh báo: `outbox` tồn đọng · sổ cái lệch ≠ 0 · tỉ lệ `trips_expired` tăng vọt
 
 **Verify** — `curl localhost:8080/metrics`; tắt Postgres → `/readyz` trả 503
 
@@ -458,12 +477,12 @@ Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị updat
 | [G-17](05-doi-chieu-spec-code.md#g-17) clock chưa tiêm | [T-17](#t-17) | ✅ xong | 0 |
 | [G-18](05-doi-chieu-spec-code.md#g-18) SUSPENDED chết | [T-24](#t-24) | P2 | 4 |
 | [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | P2 | 4 |
-| [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) | P1 | 3 |
+| [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) | P1 | 3 | 🟡 ETA đã theo lô; `drivers.Get` vẫn N+1 |
 | [G-21](05-doi-chieu-spec-code.md#g-21) token không thu hồi | [T-24](#t-24) | P2 | 4 |
-| [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | P1 | 3 |
+| [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | P1 | 3 | 🟡 rate limit đã toàn cụm; chưa giới hạn riêng theo SĐT |
 | [G-23](05-doi-chieu-spec-code.md#g-23) trường chết ở pricing | [T-18](#t-18) | P2 | 1 |
 | [G-24](05-doi-chieu-spec-code.md#g-24) ActiveByDriver chết | [T-12](#t-12) | P2 | 1 |
-| [G-25](05-doi-chieu-spec-code.md#g-25) không quan sát được | [T-25](#t-25) | P1 | 3 |
+| [G-25](05-doi-chieu-spec-code.md#g-25) không quan sát được | [T-25](#t-25) | P1 | 3 | ✅ xong (trừ tracing) |
 | [G-26](05-doi-chieu-spec-code.md#g-26) CCCD plaintext | [T-24](#t-24) | P2 | 4 |
 | [G-27](05-doi-chieu-spec-code.md#g-27) `driver_busy` cho tài xế OFFLINE | [T-28](#t-28) | P2 | — |
 | ✅ [G-28](05-doi-chieu-spec-code.md#g-28) khoá idempotency kẹt 24h | [T-05](#t-05) *(sửa khi kiểm thử)* | P0 | 1 |

@@ -38,6 +38,8 @@ func (a *App) StartWorkers(ctx context.Context) {
 	a.Bus.Subscribe(eventbus.TopicOfferAccepted, a.onOfferStat(driver.StatsDelta{OffersAccepted: 1}))
 	a.Bus.Subscribe(eventbus.TopicTripRated, a.onTripRated)
 
+	a.startMetricsConsumers()
+
 	go a.sweepOTPChallenges(ctx)
 
 	// Ở chế độ Postgres, sự kiện đi qua outbox nên PHẢI có relay chạy, nếu không

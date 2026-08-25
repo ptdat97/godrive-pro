@@ -40,9 +40,17 @@ type WalletPort interface {
 	DriverBalance(ctx context.Context, driverID string) (money.VND, error)
 }
 
-// ETAEngine ước lượng thời gian tài xế tới điểm đón.
+// ETAEngine ước lượng thời gian tới điểm đón cho MỘT LÔ ứng viên.
+//
+// Nhận cả lô chứ không nhận từng cặp là quyết định về CHI PHÍ, không phải về
+// hiệu năng: OSRM có endpoint /table trả ma trận thời gian trong một lần gọi,
+// còn gọi /route cho từng ứng viên là N lần. Với dịch vụ bản đồ tính tiền theo
+// request, một vòng dispatch 50 ứng viên là 50 lần tính tiền thay vì 1.
+//
+// Trả về slice CÙNG ĐỘ DÀI và CÙNG THỨ TỰ với from. Ứng viên nào không tính
+// được ETA thì trả giá trị âm ở đúng vị trí đó.
 type ETAEngine interface {
-	ETASeconds(ctx context.Context, from, to geo.Point) (float64, error)
+	ETASeconds(ctx context.Context, from []geo.Point, to geo.Point) ([]float64, error)
 }
 
 type Engine struct {
@@ -224,7 +232,14 @@ func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64) (
 		return nil, err
 	}
 	now := e.clk.Now()
-	out := make([]Candidate, 0, len(snaps))
+
+	// Lọc điều kiện TRƯỚC, tính ETA SAU: không hỏi dịch vụ bản đồ về những tài
+	// xế chắc chắn không dùng được (chưa duyệt hồ sơ, đang nợ quá hạn mức).
+	type cand struct {
+		snap location.Snapshot
+		drv  *driver.Driver
+	}
+	eligible := make([]cand, 0, len(snaps))
 	for _, s := range snaps {
 		d, err := e.drivers.Get(ctx, s.DriverID)
 		if err != nil {
@@ -243,22 +258,42 @@ func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64) (
 		if err := d.CanAcceptTrip(driver.DefaultDebtLimit); err != nil {
 			continue
 		}
-		etaSec, err := e.eta.ETASeconds(ctx, s.Point, t.Pickup.Point)
-		if err != nil {
-			continue
+		eligible = append(eligible, cand{snap: s, drv: d})
+	}
+	if len(eligible) == 0 {
+		return nil, nil
+	}
+
+	froms := make([]geo.Point, len(eligible))
+	for i, c := range eligible {
+		froms[i] = c.snap.Point
+	}
+	etas, err := e.eta.ETASeconds(ctx, froms, t.Pickup.Point)
+	if err != nil {
+		return nil, err
+	}
+	if len(etas) != len(eligible) {
+		return nil, errs.E(errs.KindInternal, "eta_length_mismatch",
+			"Máy ước lượng thời gian trả về số kết quả không khớp số ứng viên.")
+	}
+
+	out := make([]Candidate, 0, len(eligible))
+	for i, c := range eligible {
+		if etas[i] < 0 {
+			continue // không tính được ETA cho ứng viên này
 		}
 		out = append(out, Candidate{
-			DriverID:    s.DriverID,
-			Point:       s.Point,
-			BearingDeg:  s.BearingDeg,
-			VehicleType: s.VehicleType,
-			DistanceM:   geo.DistanceM(s.Point, t.Pickup.Point),
-			ETASec:      etaSec,
-			Rating:      d.Rating(),
-			Acceptance:  d.AcceptanceRate(),
+			DriverID:    c.snap.DriverID,
+			Point:       c.snap.Point,
+			BearingDeg:  c.snap.BearingDeg,
+			VehicleType: c.snap.VehicleType,
+			DistanceM:   geo.DistanceM(c.snap.Point, t.Pickup.Point),
+			ETASec:      etas[i],
+			Rating:      c.drv.Rating(),
+			Acceptance:  c.drv.AcceptanceRate(),
 			// Thời gian RẢNH thật, không phải độ cũ của ping vị trí.
 			// Dùng độ cũ của ping là vô tình thưởng cho tài xế mạng kém.
-			IdleSeconds: d.IdleSeconds(now),
+			IdleSeconds: c.drv.IdleSeconds(now),
 		})
 	}
 	return out, nil

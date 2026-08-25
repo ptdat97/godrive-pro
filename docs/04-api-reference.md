@@ -38,7 +38,11 @@ Middleware `Issuer.Require(roles…)` chặn trước khi vào handler.
 | `Idempotency-Key` | vào | **Chỉ `POST /v1/trips`** đọc header này. TTL 24h |
 
 **Giới hạn** — body tối đa **1 MB**; `DisallowUnknownFields` (trường lạ → `invalid_body`);
-rate limit **30 req/s, burst 60 mỗi IP** (lấy IP từ `X-Forwarded-For` nếu có).
+rate limit **30 req/s, burst 60 mỗi IP** (lấy IP từ `X-Forwarded-For` nếu có). Có `REDIS_URL` thì
+hạn mức **dùng chung cho cả cụm**; không thì mỗi pod một hạn mức riêng.
+
+`/healthz`, `/readyz` và `/metrics` **được miễn rate limit** — chặn chúng là cách tự tạo sự cố dây
+chuyền: pod tải cao → health check bị chặn → orchestrator giết pod → tải dồn sang pod còn lại.
 
 ---
 
@@ -46,7 +50,9 @@ rate limit **30 req/s, burst 60 mỗi IP** (lấy IP từ `X-Forwarded-For` nế
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
-| `GET` | `/healthz` | — | `app.Router` |
+| `GET` | `/healthz` | — | liveness: tiến trình còn sống không |
+| `GET` | `/readyz` | — | readiness: **ping thật** Postgres + Redis, trả 503 khi hỏng |
+| `GET` | `/metrics` | — | số liệu định dạng Prometheus |
 | **Xác thực** ||||
 | `POST` | `/v1/auth/otp` | công khai | `identity.requestOTP` |
 | `POST` | `/v1/auth/verify` | công khai | `identity.verifyOTP` |

@@ -2,7 +2,7 @@
 
 > **Nguồn sự thật:** code trong [`godrive/`](../godrive) và [`godrive-admin/`](../godrive-admin).
 > Tài liệu này **đã đối chiếu từng mục với code thật** ngày **2026-08-24** (Go 1.26.5, macOS),
-> và cập nhật lại sau khi hoàn thành **Giai đoạn 0, 1 và 2** của kế hoạch.
+> và cập nhật lại sau khi hoàn thành **Giai đoạn 0, 1, 2** và **phần kiểm chứng được của Giai đoạn 3**.
 > Khi code và tài liệu lệch nhau, code là chuẩn — và tài liệu phải được sửa, không phải ngược lại.
 >
 > [`RIDE_HAILING_IMPLEMENTATION_SPEC.md`](../RIDE_HAILING_IMPLEMENTATION_SPEC.md) là **đặc tả gốc**.
@@ -11,38 +11,23 @@
 
 ---
 
-## Trạng thái repo tại thời điểm đối chiếu
+## Trạng thái repo
 
 | Hạng mục | Số liệu đã kiểm chứng |
 |---|---|
 | Module Go | `github.com/example/godrive`, `go 1.22` |
-| Phụ thuộc ngoài | 1 (`pgx/v5` — chỉ để đăng ký driver `database/sql`) |
-| File `.go` | **80** (60 mã nguồn + 20 test) |
-| Dòng mã (không tính test) | **7.198** |
-| Migration | **4** (`0001` … `0004`) |
+| Phụ thuộc ngoài | **2**: `pgx/v5` (Postgres), `go-redis/v9` (Redis) |
+| File `.go` | **98** |
+| Dòng mã (không tính test) | **9.668** |
+| Migration | **6** (`0001` … `0006`) |
 | `go build` / `go vet` / `gofmt -l` | ✅ sạch |
-| `go test ./...` | ✅ **71/71 pass** (**77** khi bật `TEST_DATABASE_URL`) |
-| `go test -race ./...` | ✅ pass, `-count=3`, ở **cả hai** chế độ |
-| Độ phủ test toàn dự án | **57,2%** — `pricing` 82%, `location` 78%, `app` 74% |
-| Package **chưa có** test | `outbox` (0%, chưa nối — [T-06](07-todo.md#t-06)) là đáng kể nhất |
-| Chế độ chạy được đầu-cuối | ✅ **cả in-memory lẫn Postgres** |
-| Độ bền dữ liệu | ✅ tài khoản, tài xế, chuyến, **sổ cái**, nhật ký admin đều ở Postgres |
-| Còn ở bộ nhớ | `matching.offers`, `location.index`, `pricing.quotes`, `idem.keys` ⇒ **chỉ chạy 1 bản sao** |
-
----
-
-## Tiến độ
-
-| Giai đoạn | Trạng thái |
-|---|---|
-| [GĐ 0 — Sửa nền](06-ke-hoach-trien-khai.md) | ✅ **xong** — 6/6 việc |
-| [GĐ 1 — Bền dữ liệu & đúng tiền](06-ke-hoach-trien-khai.md) | ✅ **xong** — 7/7 việc. Sổ cái đã bền, cổng chặn nợ đã hoạt động, phí huỷ đã ghi sổ |
-| [GĐ 2 — Đúng nghiệp vụ](06-ke-hoach-trien-khai.md) | ⬜ tiếp theo — thống kê tài xế, surge, outbox |
-| GĐ 3–5 | ⬜ chưa bắt đầu |
-
-**5 lỗi tìm thấy và đã sửa trong lúc kiểm thử GĐ 1** — xem [05 §5.6](05-doi-chieu-spec-code.md#loi-moi).
-
-Chi tiết từng việc: [07 — TODO](07-todo.md).
+| `go test ./...` | ✅ **102 pass** (in-memory) · **119 pass** (đủ Postgres + Redis) |
+| `go test -race ./... -count=6` | ✅ pass toàn bộ, không flake |
+| Độ phủ toàn dự án | **63,4%** |
+| Chế độ chạy được đầu-cuối | in-memory · Postgres · **Postgres + Redis, nhiều bản sao** |
+| Nhiều bản sao | ✅ kiểm chứng với **2 tiến trình thật** dùng chung Postgres + Redis |
+| Quan sát | `/metrics` (Prometheus) · `/readyz` kiểm thật DB + Redis |
+| Bất biến kiểm trên CSDL | **9 câu SQL**, đều sạch sau mỗi lần chạy đầu-cuối |
 
 ---
 
@@ -50,14 +35,18 @@ Chi tiết từng việc: [07 — TODO](07-todo.md).
 
 | Giai đoạn | Trạng thái | Nội dung |
 |---|---|---|
-| **GĐ 0 — Sửa nền** | ✅ **xong** | Chạy được với Postgres; giấy tờ tài xế lưu trọn vẹn; goroutine nền có `recover`; dọn rò rỉ bộ nhớ |
-| **GĐ 1 — Bền dữ liệu & đúng tiền** | ✅ **xong** | Sổ cái Postgres; cổng chặn công nợ hoạt động thật; ghi sổ phí huỷ; bỏ hết float khỏi đường tiền; API ví; nhật ký thao tác admin |
-| **GĐ 2 — Đúng nghiệp vụ** | ✅ **xong** | Chỉ số tài xế sống; `IdleSince` đo đúng; surge phản ứng cầu thật; Transactional Outbox (at-least-once); offers + khoá chuyến xuống Postgres |
-| **GĐ 3 — Hạ tầng thật** | ⬜ chưa | Redis, NATS, MQTT, OSRM, H3, metric/tracing |
-| **GĐ 4 — Thương mại** | ⬜ chưa | Cổng thanh toán, đối soát, hoá đơn điện tử, eKYC |
-| **GĐ 5 — Quy mô** | ⬜ chưa | Tách service, khuyến mãi, chống gian lận nâng cao |
+| [GĐ 0 — Sửa nền](06-ke-hoach-trien-khai.md) | ✅ **xong** | Chạy được với Postgres · giấy tờ tài xế lưu trọn vẹn · goroutine nền có `recover` · dọn rò rỉ bộ nhớ |
+| [GĐ 1 — Bền dữ liệu & đúng tiền](06-ke-hoach-trien-khai.md) | ✅ **xong** | Sổ cái Postgres · cổng chặn công nợ hoạt động thật · ghi sổ phí huỷ · bỏ hết float khỏi đường tiền · API ví · nhật ký thao tác admin |
+| [GĐ 2 — Đúng nghiệp vụ](06-ke-hoach-trien-khai.md) | ✅ **xong** | Chỉ số tài xế sống · `IdleSince` đo đúng · surge phản ứng cầu thật · Transactional Outbox (at-least-once) · offers + khoá chuyến xuống Postgres |
+| [GĐ 3 — Hạ tầng thật](06-ke-hoach-trien-khai.md) | 🟡 **một phần** | ✅ Redis: chỉ mục vị trí GEO, khoá giành chuyến, lời mời, báo giá, idempotency, rate limit toàn cụm · ✅ OSRM `/route` + `/table` (một request cho cả lô) · ✅ metrics + `/readyz`<br>⬜ NATS · MQTT · push FCM/APNs · H3 · tracing |
+| [GĐ 4 — Thương mại](06-ke-hoach-trien-khai.md) | ⬜ chưa | Cổng thanh toán · đối soát · hoá đơn điện tử · eKYC |
+| [GĐ 5 — Quy mô](06-ke-hoach-trien-khai.md) | ⬜ chưa | Tách service · khuyến mãi · chống gian lận nâng cao |
 
-**9 bất biến được kiểm trực tiếp trên CSDL sau mỗi lần chạy** — xem [08 §8.7](08-van-hanh.md).
+> **Vì sao GĐ 3 dừng ở đây.** Bốn hạng mục còn lại **không kiểm chứng được** trên máy phát triển
+> này: không có Docker, không có NATS/EMQX nào đang chạy, và push cần credential thật của
+> FCM/APNs. Viết code cho chúng mà không chạy thử được thì chỉ là đoán — và bài học lớn nhất
+> của ba giai đoạn trước đúng là ở chỗ đó: **7 lỗi nghiêm trọng nhất đều chỉ lộ ra khi chạy thật**,
+> không lỗi nào tìm thấy bằng cách đọc code.
 
 ---
 
@@ -92,6 +81,11 @@ Chi tiết từng việc: [07 — TODO](07-todo.md).
    **cùng một transaction** (`Repository.Save(ctx, trip, event, msgs...)`). Đây là hợp đồng vận tải
    điện tử theo Nghị định 10/2020 — lưu ≥ 3 năm.
 
-4. **Không suy trạng thái tài xế từ sự kiện nào vừa tới.** Bus phát bất đồng bộ nên sự kiện có thể
+4. **Redis giữ dữ liệu NÓNG, Postgres giữ SỰ THẬT.** Vị trí tài xế, khoá giành
+   chuyến, lời mời, báo giá, khoá idempotency và bộ đếm rate limit nằm ở Redis vì
+   chúng ghi rất nhiều và sống rất ngắn. Tiền, chuyến và nhật ký nằm ở Postgres.
+   Mất Redis là mất hiệu năng; mất Postgres là mất dữ liệu.
+
+5. **Không suy trạng thái tài xế từ sự kiện nào vừa tới.** Bus phát bất đồng bộ nên sự kiện có thể
    đến sai thứ tự. Luôn đọc trạng thái **hiện tại** của chuyến rồi mới đặt trạng thái tài xế
    (`app.syncDriverStatus`). Bản cũ làm ngược lại và để tài xế kẹt vĩnh viễn ở `ON_TRIP` trong ~10% số chuyến.

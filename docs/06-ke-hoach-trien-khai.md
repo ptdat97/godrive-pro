@@ -125,34 +125,47 @@ mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủ
 
 ---
 
-## Giai đoạn 3 — Hạ tầng thật (~15 ngày) · **P1** ← **đang tới**
+## Giai đoạn 3 — Hạ tầng thật · 🟡 **MỘT PHẦN** (2026-08-25)
 
 **Mục tiêu:** chạy nhiều pod. Đây là chỗ *"đổi implementation, không sửa nghiệp vụ"* của spec §8 nhóm B.
 
-| Hiện tại | Thay bằng | Ước lượng |
+| Hiện tại | Thay bằng | Trạng thái |
 |---|---|---|
-| `location.MemoryIndex` | Redis `GEOSEARCH` (hoặc H3 cell → Redis Set) | ~2,5n |
-| `matching.MemoryStore.ClaimTrip` | Redis `SET trip:{id}:claim NX EX 30` | ~1,5n |
-| `pkg/geo` lưới ô vuông | `github.com/uber/h3-go/v4` res 8–9 (chỉ đổi `CellOf`/`Ring`) | ~1,5n |
-| `idem.NewMemoryStore` | Postgres `idempotency_keys` hoặc Redis | ~1n |
-| `pricing.NewMemoryQuoteStore` | Redis, TTL 5 phút | ~0,5n |
-| `httpx.NewRateLimit` | Redis (giới hạn toàn cụm) + giới hạn OTP theo **số điện thoại** ([G-22](05-doi-chieu-spec-code.md#g-22)) | ~1,5n |
-| `eventbus.NewInMemory` | **NATS JetStream** — sau bước này `cmd/worker` mới có ý nghĩa | ~3n |
-| `pricing.HaversineEngine` | OSRM `/route` tự host (Goong/VietMap dự phòng) | ~2n |
-| `matching.SimpleETA` | OSRM `/table` — **một request cho cả lô**, cache theo cặp ô lưới | ~2n |
-| `notification.LogPusher` | FCM (Android) + APNs; `LogOTPSender` → **Zalo ZNS** | ~2,5n |
-| — | **MQTT (EMQX)** cho luồng vị trí, topic `drv/{id}/loc` QoS 1 + Last Will | ~3n |
+| `location.MemoryIndex` | `location.RedisIndex` — `GEOADD` + `GEOSEARCH`, kèm HASH thuộc tính có TTL | ✅ **xong** |
+| `matching.MemoryStore.ClaimTrip` | `matching.RedisStore` — script Lua nguyên tử | ✅ **xong** |
+| `idem.NewMemoryStore` | `idem.RedisStore` — `SET NX` + `KEEPTTL` | ✅ **xong** |
+| `pricing.NewMemoryQuoteStore` | `pricing.RedisQuoteStore` — TTL 5 phút | ✅ **xong** |
+| `httpx.NewRateLimit` | `httpx.RedisRateLimit` — token bucket bằng Lua, toàn cụm | ✅ **xong** |
+| `pricing.HaversineEngine` | `pricing.OSRMEngine` — `/route`, có đường lùi haversine | ✅ **xong** |
+| `matching.SimpleETA` | `matching.OSRMETA` — `/table`, **một request cho cả lô**, cache theo cặp ô lưới | ✅ **xong** |
+| — | `/metrics` (Prometheus) + `/readyz` kiểm thật DB + Redis | ✅ **xong** |
+| `pkg/geo` lưới ô vuông | `github.com/uber/h3-go/v4` res 8–9 | ⬜ **chưa** — Redis GEO đã lo phần chỉ mục không gian; lưới ô nay chỉ còn dùng cho ô đếm cầu của surge và khoá cache ETA, nên giá trị đổi sang H3 giảm hẳn |
+| `eventbus.NewInMemory` | **NATS JetStream** | ⬜ **chưa** — không có broker để chạy thử |
+| `notification.LogPusher` | FCM + APNs; `LogOTPSender` → **Zalo ZNS** | ⬜ **chưa** — cần credential thật |
+| — | **MQTT (EMQX)** cho luồng vị trí | ⬜ **chưa** — không có broker để chạy thử |
+
+> **Vì sao dừng ở đây thay vì viết nốt.** Bốn hạng mục còn lại không chạy thử được trên máy phát
+> triển này (không Docker, không broker, không credential). Ba giai đoạn trước cho thấy **7 lỗi
+> nghiêm trọng nhất đều chỉ lộ ra khi chạy thật** — bốn trong số đó là cuộc đua hoặc lỗi thứ tự
+> mà đọc code không thấy được. Giao một client NATS chưa từng nối vào broker nào là giao một thứ
+> chưa biết có chạy không.
 
 **Đồng thời:** metric Prometheus, tracing OpenTelemetry, `/readyz` kiểm tra DB + Redis ([G-25](05-doi-chieu-spec-code.md#g-25)).
 
 ### Điều kiện hoàn thành
 
-- [ ] **3 pod API + 2 pod worker** cùng phục vụ; giết 1 pod bất kỳ không mất chuyến nào
-- [ ] Báo giá ở pod A, đặt chuyến ở pod B → thành công (quote store dùng chung)
-- [ ] Hai tài xế nhận cùng chuyến **từ hai pod khác nhau** → đúng một người thắng
-- [ ] Ứng dụng tài xế nhận offer qua **push**, không cần poll
-- [ ] Chi phí Maps: đo được số request OSRM/chuyến, có tỉ lệ cache hit
-- [ ] Load test riêng `matching` — spec §8 nhóm C #13 gọi đây là điểm nghẽn đầu tiên
+- [x] **2 tiến trình API thật** cùng phục vụ trên một Postgres + một Redis
+- [x] Token cấp ở pod A dùng được ở pod B; OTP xin ở pod A xác thực ở pod B
+- [x] Báo giá ở pod A, đặt chuyến ở pod B → thành công
+- [x] Ping gửi tới pod A, pod B thấy trên bản đồ (Redis GEO dùng chung)
+- [x] Cùng `Idempotency-Key` ở hai pod → **một chuyến duy nhất**
+- [x] Hai pod cùng bấm nhận một lời mời → **đúng một bên thắng** (`[200, 409]`)
+- [x] Rate limit dùng **chung hạn mức** giữa các pod, không phải mỗi pod một hạn mức
+- [x] `/readyz` trả 503 khi phụ thuộc chết; `/metrics` phát số liệu Prometheus
+- [x] Chi phí Maps: **một request OSRM cho cả lô** + cache theo cặp ô lưới — có test đếm số request
+- [ ] Ứng dụng tài xế nhận offer qua **push**, không cần poll — *chưa (cần FCM)*
+- [ ] Giết 1 pod giữa chừng không mất chuyến nào — *cần NATS để consumer có ack*
+- [ ] Load test riêng `matching`
 
 ---
 
