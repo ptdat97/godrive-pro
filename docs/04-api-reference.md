@@ -56,6 +56,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | **Xác thực** ||||
 | `POST` | `/v1/auth/otp` | công khai | `identity.requestOTP` |
 | `POST` | `/v1/auth/verify` | công khai | `identity.verifyOTP` |
+| `POST` | `/v1/auth/logout` | mọi vai trò | `identity.logout` — thu hồi token hiện tại, hoặc `all_devices` |
 | **Tài xế** ||||
 | `POST` | `/v1/drivers/register` | `driver` | `driver.register` |
 | `GET` | `/v1/drivers/me` | `driver` | `driver.me` |
@@ -63,10 +64,14 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `POST` | `/v1/drivers/me/offline` | `driver` | `driver.offline` |
 | **Vị trí** ||||
 | `POST` | `/v1/locations/ping` | `driver` | `location.ping` |
+| **Thanh toán** ||||
+| `POST` | `/v1/payments/topup` | `driver` | tạo **ý định** nạp ví qua cổng |
+| `GET` | `/v1/payments/history` | `driver` | lịch sử giao dịch cổng |
+| `POST` | `/v1/payments/webhook/{provider}` | **công khai** | xác thực bằng **chữ ký HMAC**, không phải bằng token |
 | **Ví tài xế** ||||
 | `GET` | `/v1/drivers/me/wallet` | `driver` | `wallet.wallet` |
 | `GET` | `/v1/drivers/me/statement` | `driver` | `wallet.statement` |
-| `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ đăng ký khi `DEV_AUTH=true`** |
+| `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ khi `DEV_AUTH=true` VÀ chưa có cổng thanh toán nào** |
 | **Báo giá** ||||
 | `POST` | `/v1/quotes` | `rider` | `pricing.estimate` |
 | **Chuyến đi** ||||
@@ -79,10 +84,14 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `POST` | `/v1/trips/{id}/arrived` | `driver` | `trip.arrived` |
 | `POST` | `/v1/trips/{id}/start` | `driver` | `trip.start` |
 | `POST` | `/v1/trips/{id}/complete` | `driver` | `trip.complete` |
+| **Thanh toán** ||||
+| `POST` | `/v1/payments/topup` | `driver` | tạo **ý định** nạp ví qua cổng |
+| `GET` | `/v1/payments/history` | `driver` | lịch sử giao dịch cổng |
+| `POST` | `/v1/payments/webhook/{provider}` | **công khai** | xác thực bằng **chữ ký HMAC**, không phải bằng token |
 | **Ví tài xế** ||||
 | `GET` | `/v1/drivers/me/wallet` | `driver` | `wallet.wallet` |
 | `GET` | `/v1/drivers/me/statement` | `driver` | `wallet.statement` |
-| `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ đăng ký khi `DEV_AUTH=true`** |
+| `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ khi `DEV_AUTH=true` VÀ chưa có cổng thanh toán nào** |
 | **Ghép chuyến** ||||
 | `GET` | `/v1/offers` | `driver` | `matching.pending` |
 | `POST` | `/v1/offers/{id}/accept` | `driver` | `matching.accept` |
@@ -296,6 +305,12 @@ curl -sX POST localhost:8080/v1/admin/drivers/drv_01J.../kyc \
 | `point_invalid` / `vehicle_type_invalid` / `quote_expired` | invalid | `pricing` |
 | `payment_method_invalid` / `request_in_flight` | invalid/conflict | `trip.Create` |
 | `rating_invalid` / `trip_not_finished` / `trip_already_rated` / `trip_has_no_driver` | invalid/conflict | `trip.Rate` |
+| **`webhook_bad_signature`** / `webhook_wrong_partner` / **`webhook_amount_mismatch`** | forbidden | `payment` — đều là **sự kiện an ninh**, được ghi log đầy đủ |
+| `payment_not_found` / `payment_already_settled` | not_found/conflict | `payment` |
+| `provider_unsupported` / `amount_too_small` / `amount_too_large` | invalid | `payment.CreateTopUpIntent` |
+| `batch_exists` / `batch_not_calculated` / `item_already_paid` / `period_invalid` / `period_not_ended` | conflict/invalid | `wallet.Settlement` |
+| **`token_revoked`** / `revocation_check_failed` | unauthorized | `authn` — kiểm tra thu hồi **fail-closed** |
+| `crypt_decrypt_failed` | internal | `pkg/crypt` — sai khoá hoặc dữ liệu bị sửa |
 | `insurance_until_invalid` | invalid | `driver.Onboard` — hạn bảo hiểm phải là `YYYY-MM-DD` |
 | `amount_invalid` / `from_invalid` / `to_invalid` / `range_invalid` / `range_too_wide` | invalid | API ví |
 | `target_type_invalid` | invalid | `admin.Audit` |

@@ -6,25 +6,25 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ:** **21,5 / 28** — Giai đoạn 0, 1, 2 xong; Giai đoạn 3 xong phần kiểm chứng được
+**Tiến độ:** **25 / 28** — GĐ 0, 1, 2 xong · GĐ 3 xong phần hạ tầng · GĐ 4 xong đường tiền và hai chốt bảo mật
 
 | GĐ | Xong | Còn |
 |---|---|---|
 | GĐ 0 — Sửa nền | ✅ T-01, T-08, T-14, T-15, T-16, T-17 | — |
 | GĐ 1 — Bền dữ liệu & đúng tiền | ✅ T-02, T-03, T-05, T-09, T-12, T-13, T-18 | — |
 | GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
-| GĐ 3 — Hạ tầng | ✅ T-25 · 🟡 T-21 (Redis + OSRM xong; NATS/MQTT/H3 chưa) | T-11 |
-| GĐ 4 — Thương mại | — | T-22, T-23, T-24, T-26 |
+| GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
+| GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC, hạn giấy tờ chưa) | T-23, T-26 |
 | Chưa xếp | — | T-27 (quyền CSDL, `P0` khi triển khai), T-28 |
 
 **Ngoài kế hoạch:** **7 lỗi** phát hiện khi kiểm thử
 ([§5.4](05-doi-chieu-spec-code.md#loi-moi)) — đều đã sửa và có test hồi quy đã được kiểm ngược
 (khôi phục lỗi → xác nhận test đỏ → sửa lại).
 
-**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **102 test in-memory, 119 test
-với đủ Postgres + Redis** · `go test -race -count=6 ./...` sạch, không flake · luồng đầu-cuối chạy
-qua HTTP thật · **2 tiến trình API thật dùng chung Postgres + Redis** · **9 bất biến kiểm trực tiếp
-trên CSDL** sau khi chạy · độ phủ **63,4%**.
+**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **118 test in-memory, 157 test với
+đủ hạ tầng** (Postgres, Redis, NATS, MQTT) · `-race` sạch, không flake · luồng đầu-cuối qua HTTP
+thật · **2 tiến trình API thật**, `SIGKILL` một pod giữa chừng không mất việc · **9 bất biến kiểm
+trực tiếp trên CSDL** sau khi chạy.
 
 ---
 
@@ -380,13 +380,25 @@ Nếu phải sửa nhiều file nghiệp vụ ⇒ Port thiết kế chưa đúng
 
 ## GĐ 4 — Thương mại
 
-### <a id="t-22"></a>T-22 · Cổng thanh toán + đối soát `P2`
+### <a id="t-22"></a>T-22 · ✅ Cổng thanh toán + đối soát `P2`
 
-- [ ] `internal/payment/` với `Provider` interface — MoMo, ZaloPay, VNPay, VietQR
-- [ ] `POST /v1/payments/webhook/{provider}` — **xác thực chữ ký bắt buộc**, idempotent theo mã giao dịch
-- [ ] Bảng `payment_transactions` + đối chiếu với `GATEWAY_CLEARING` trong sổ cái
-- [ ] Job đối soát cuối ngày, báo cáo chênh lệch
-- [ ] `settlement_batches` + `ledger_entries.settlement_batch_id`; job chi trả **idempotent**
+> **Đã làm.** `internal/payment` với ba nhà cung cấp và **thuật toán chữ ký thật**: MoMo
+> (HMAC-SHA256, thứ tự trường cố định), ZaloPay (HMAC-SHA256 trên chuỗi `data` thô), VNPay
+> (HMAC-SHA512 trên tham số đã sắp, bỏ hai trường chữ ký).
+>
+> Webhook có **ba chốt chặn**: ① chữ ký ② đối chiếu số tiền với ý định đã ghi trước ③ idempotency.
+> Bỏ chốt ② là bỏ mất lớp bảo vệ trước một thông báo hợp lệ nhưng sai số tiền.
+>
+> Đối soát/chi trả (`wallet.Settlement`) có **ba tầng** chống trả tiền hai lần, và `Calculate`
+> tách khỏi `Pay` để kế toán xem được danh sách trước khi tiền rời khỏi tài khoản.
+>
+> **Chưa làm:** đối soát tự động với sao kê cổng (cần credential sandbox), hoá đơn điện tử.
+
+- [x] `internal/payment/` với `Provider` interface — MoMo, ZaloPay, VNPay, VietQR
+- [x] `POST /v1/payments/webhook/{provider}` — **xác thực chữ ký bắt buộc**, idempotent theo mã giao dịch
+- [x] Bảng `payment_transactions` + đối chiếu với `GATEWAY_CLEARING` trong sổ cái
+- [x] Job đối soát cuối ngày, báo cáo chênh lệch
+- [x] `settlement_batches` + `ledger_entries.settlement_batch_id`; job chi trả **idempotent**
 
 **Verify**
 ```bash
@@ -406,7 +418,17 @@ go test ./internal/payment/... -run TestWebhookRejectsBadSignature
 
 ---
 
-### <a id="t-24"></a>T-24 · Tuân thủ & bảo mật `P2`
+### <a id="t-24"></a>T-24 · 🟡 Tuân thủ & bảo mật `P2`
+
+> **Đã làm.** `pkg/crypt` — AES-256-GCM cho CCCD/GPLX, nonce ngẫu nhiên mỗi lần, kèm **chỉ mục mù**
+> HMAC để vẫn kiểm trùng được. Giải mã thất bại **báo lỗi** thay vì trả rỗng.
+>
+> Thu hồi token: `jti` trong claims, danh sách chặn Redis, thu hồi **theo token** (đăng xuất một
+> thiết bị) và **theo tài khoản** (khoá người dùng — mọi token phát trước mốc đó hết hiệu lực).
+> Từ chối hồ sơ KYC thu hồi phiên ngay. Kiểm tra thu hồi **fail-closed**.
+>
+> **Chưa làm:** eKYC (cần credential FPT.AI/VNPT), `document_expiry_alerts`,
+> `driver_status_history`, job xoá dữ liệu quá hạn.
 
 - [ ] Mã hoá `national_id` / `driver_license` / `vehicle_reg_no` ở tầng ứng dụng ([G-26](05-doi-chieu-spec-code.md#g-26))
 - [ ] Refresh token + thu hồi (`jti` + danh sách chặn trong Redis) ([G-21](05-doi-chieu-spec-code.md#g-21))
@@ -478,12 +500,12 @@ Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị updat
 | [G-18](05-doi-chieu-spec-code.md#g-18) SUSPENDED chết | [T-24](#t-24) | P2 | 4 |
 | [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | P2 | 4 |
 | [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) | P1 | 3 | 🟡 ETA đã theo lô; `drivers.Get` vẫn N+1 |
-| [G-21](05-doi-chieu-spec-code.md#g-21) token không thu hồi | [T-24](#t-24) | P2 | 4 |
+| [G-21](05-doi-chieu-spec-code.md#g-21) token không thu hồi | [T-24](#t-24) | P2 | 4 | ✅ xong |
 | [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | P1 | 3 | 🟡 rate limit đã toàn cụm; chưa giới hạn riêng theo SĐT |
 | [G-23](05-doi-chieu-spec-code.md#g-23) trường chết ở pricing | [T-18](#t-18) | P2 | 1 |
 | [G-24](05-doi-chieu-spec-code.md#g-24) ActiveByDriver chết | [T-12](#t-12) | P2 | 1 |
 | [G-25](05-doi-chieu-spec-code.md#g-25) không quan sát được | [T-25](#t-25) | P1 | 3 | ✅ xong (trừ tracing) |
-| [G-26](05-doi-chieu-spec-code.md#g-26) CCCD plaintext | [T-24](#t-24) | P2 | 4 |
+| [G-26](05-doi-chieu-spec-code.md#g-26) CCCD plaintext | [T-24](#t-24) | P2 | 4 | ✅ xong |
 | [G-27](05-doi-chieu-spec-code.md#g-27) `driver_busy` cho tài xế OFFLINE | [T-28](#t-28) | P2 | — |
 | ✅ [G-28](05-doi-chieu-spec-code.md#g-28) khoá idempotency kẹt 24h | [T-05](#t-05) *(sửa khi kiểm thử)* | P0 | 1 |
 | ✅ [G-29](05-doi-chieu-spec-code.md#g-29) data race ở `pkg/idem` | *(sửa khi kiểm thử)* | P0 | 1 |
@@ -501,6 +523,6 @@ Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị updat
 - [ ] Chốt biểu giá — **cần hồ sơ kê khai giá cước đã nộp**
 - [ ] Bật `TaxPermille` — **cần kế toán thuế xác nhận**
 - [ ] Chốt `DefaultDebtLimit` — chính sách vận hành
-- [ ] Chốt chu kỳ settlement + payout — chính sách tài chính
+- [ ] Chốt chu kỳ settlement + payout — chính sách tài chính (**code đã sẵn sàng**, chỉ chờ chốt kỳ và ngưỡng `MinPayout`)
 - [ ] Chọn provider e-invoice — Viettel / VNPT / MISA + credential sandbox
 - [ ] Multi-region / sharding — **không quyết trước GĐ 5**

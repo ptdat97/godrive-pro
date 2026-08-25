@@ -187,30 +187,68 @@ là tạo consumer mới và đọc lại từ đầu.
 
 ---
 
-## Giai đoạn 4 — Sẵn sàng thương mại (~25 ngày) · **P2**
+## Giai đoạn 4 — Sẵn sàng thương mại · 🟡 **MỘT PHẦN** (2026-08-25)
 
 **Không sang giai đoạn này khi GĐ 1 chưa xong.**
 
 | Nhóm | Việc | Ước lượng |
 |---|---|---|
-| **Tiền** | Cổng thanh toán MoMo / ZaloPay / VNPay / VietQR: webhook **xác thực chữ ký** + đối soát tự động cuối ngày | ~7n |
-| | Job đối soát & chi trả: `settlement_batches` + `ledger_entries.settlement_batch_id`. **Bắt buộc idempotent — chạy 2 lần không double-pay** | ~4n |
+| **Tiền** | ✅ Cổng thanh toán MoMo / ZaloPay / VNPay — webhook **xác thực chữ ký thật**, đối chiếu số tiền, idempotent | **xong** |
+| | ✅ Job đối soát & chi trả: `settlement_batches` + `settlement_items` + `ledger_entries.settlement_batch_id`, **ba tầng chống trả tiền hai lần** | **xong** |
 | | Hoá đơn điện tử (NĐ 123/2020): `internal/wallet/einvoice/` + `EInvoiceProvider` adapter (Viettel/VNPT/MISA). Retry backoff, **không chặn hoàn tất chuyến** | ~5n |
 | | Bật `TaxPermille` sau khi kế toán thuế xác nhận | ~1n |
 | **Tuân thủ** | Theo dõi hạn giấy tờ: `document_expiry_alerts` + job cảnh báo trước hạn (đăng kiểm, TNDS, GPLX) | ~2n |
 | | `driver_status_history` — lịch sử để đối soát tranh chấp | ~1,5n |
-| | Mã hoá CCCD/GPLX ở tầng ứng dụng ([G-26](05-doi-chieu-spec-code.md#g-26)) | ~2n |
+| | ✅ Mã hoá CCCD/GPLX ở tầng ứng dụng — AES-256-GCM + chỉ mục mù ([G-26](05-doi-chieu-spec-code.md#g-26)) | **xong** |
 | | eKYC FPT.AI / VNPT — đối chiếu CCCD gắn chip với GPLX | ~4n |
 | **An toàn** | Nút SOS, chia sẻ hành trình | ~3n |
-| **Bảo mật** | Refresh token + thu hồi (`jti` + danh sách chặn Redis) ([G-21](05-doi-chieu-spec-code.md#g-21)) | ~2n |
+| **Bảo mật** | ✅ Thu hồi token — `jti` + danh sách chặn Redis, thu hồi theo token và theo tài khoản ([G-21](05-doi-chieu-spec-code.md#g-21)) | **xong** |
+
+### Ba chốt chặn của webhook — không được bỏ chốt nào
+
+```
+thông báo từ cổng
+      │
+      ▼  ① CHỮ KÝ        webhook là endpoint CÔNG KHAI; cổng không đăng nhập
+      │                   được, nên chữ ký HMAC là thứ DUY NHẤT phân biệt
+      │                   thông báo thật với request bất kỳ ai cũng gửi được
+      ▼  ② SỐ TIỀN       chữ ký chứng minh thông báo đến TỪ cổng, không chứng
+      │                   minh số tiền ĐÚNG với thứ mình yêu cầu — nên phải ghi
+      │                   Ý ĐỊNH trước rồi đối chiếu
+      ▼  ③ IDEMPOTENCY   cổng gửi lại khi không nhận được 200; đó là hành vi
+      │                   bình thường, không phải sự cố
+      ▼
+   ghi sổ cái
+```
+
+### Ba tầng chống trả tiền hai lần
+
+Mỗi tầng độc lập; tầng nào hỏng thì tầng sau vẫn giữ:
+
+1. `UNIQUE (period_start, period_end)` — một kỳ chỉ một đợt
+2. `UNIQUE (batch_id, driver_id)` + `UPDATE ... WHERE status='PENDING'` — một tài xế một dòng, giành quyền chi nguyên tử
+3. `TxID` tất định `tx_payout_{batch}_{driver}` — sổ cái tự khử trùng
+
+`Calculate` tách khỏi `Pay` có chủ đích: kế toán phải xem được danh sách **trước khi**
+tiền rời khỏi tài khoản. Gộp hai bước là bỏ mất chốt kiểm soát cuối cùng của con người.
 
 ### Điều kiện hoàn thành
 
-- [ ] Webhook giả mạo chữ ký bị từ chối — **có test**
-- [ ] Đối soát cuối ngày khớp 100% với sao kê cổng thanh toán trên dữ liệu thật
-- [ ] Job chi trả chạy **hai lần** cho cùng kỳ → tổng chi **không đổi**
-- [ ] Hoá đơn phát hành lỗi → chuyến vẫn hoàn tất bình thường, hoá đơn vào hàng đợi retry
-- [ ] Tài xế có giấy tờ sắp hết hạn nhận cảnh báo trước 30/15/7 ngày
+- [x] Webhook **giả mạo chữ ký** bị từ chối — có test cho từng trường bị sửa sau khi ký
+- [x] Webhook **chữ ký thật nhưng sai số tiền** bị từ chối, không ghi có đồng nào
+- [x] Webhook gửi lại 5 lần chỉ ghi có **một lần**
+- [x] Giao dịch thất bại ở cổng → **không** ghi có
+- [x] Job chi trả chạy **bốn lần** cho cùng đợt → tổng chi **không đổi**
+- [x] Tài xế dưới ngưỡng chi trả được ghi lại là `SKIPPED` kèm lý do, không bỏ qua im lặng
+- [x] Số CCCD/GPLX **không nằm thô** trong CSDL; sai khoá thì **báo lỗi**, không trả hồ sơ rỗng
+- [x] Từ chối hồ sơ **thu hồi phiên ngay**, không chờ token hết hạn
+- [ ] Đối soát cuối ngày khớp 100% với sao kê cổng thật — *cần credential sandbox*
+- [ ] Hoá đơn phát hành lỗi → chuyến vẫn hoàn tất, hoá đơn vào hàng đợi retry — *chưa làm*
+- [ ] Tài xế có giấy tờ sắp hết hạn nhận cảnh báo trước 30/15/7 ngày — *chưa làm*
+
+> **Còn lại của GĐ 4:** hoá đơn điện tử (cần chọn nhà cung cấp + credential sandbox), eKYC
+> (cần credential FPT.AI/VNPT), theo dõi hạn giấy tờ, `driver_status_history`, SOS/chia sẻ hành
+> trình. Ba việc đầu chặn ở credential chứ không chặn ở kỹ thuật.
 
 ---
 

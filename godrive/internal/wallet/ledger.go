@@ -57,6 +57,9 @@ type Transaction struct {
 	RefType RefType
 	RefID   string
 	At      time.Time
+	// BatchID nối bút toán với đợt đối soát đã sinh ra nó. Rỗng với giao dịch
+	// thường. Nhờ nó mà kế toán truy được "đợt này đã chi những gì".
+	BatchID string
 }
 
 // Validate bảo đảm giao dịch ghi được: có mã, đủ hai vế, mọi bút toán có chủ,

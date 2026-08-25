@@ -59,6 +59,9 @@ Nguồn: [`migrations/0001_init.up.sql`](../godrive/migrations/0001_init.up.sql)
 | `admin_audit_log` | `admin` | ✅ | ✅ | 🟢 GĐ 1 — chỉ thêm mới |
 | `idempotency_keys` | `pkg/idem` | ❌ | ✅ | 🟡 chỉ hiệu lực trong 1 tiến trình. Đã sửa rò rỉ + cuộc đua ([G-29](05-doi-chieu-spec-code.md#g-29), [G-32](05-doi-chieu-spec-code.md#g-32)) |
 | `outbox` | `outbox` | ✅ | ✅ | 🟢 GĐ 2 — ghi **cùng transaction** với thay đổi nghiệp vụ; relay có DLQ |
+| `payment_transactions` | `payment` | ✅ | — | 🟢 GĐ 4 — ghi **ý định** trước, đối chiếu số tiền khi webhook về |
+| `settlement_batches` | `wallet` | ✅ | — | 🟢 GĐ 4 — `UNIQUE (period_start, period_end)` chặn chạy job hai lần |
+| `settlement_items` | `wallet` | ✅ | — | 🟢 GĐ 4 — `UNIQUE (batch_id, driver_id)` chặn trả tiền hai lần |
 
 **Đọc bảng này thế nào:** cột "Repo Postgres ❌" nghĩa là bảng đã có DDL trong migration nhưng
 **không có một dòng Go nào INSERT/SELECT nó**. Còn **3/12** bảng ở tình trạng này
@@ -184,11 +187,11 @@ Nếu hai giá trị lệch nhau — sổ cái đúng, cache sai.
 |---|---|---|
 | ~~`otp_challenges`~~ | ~~`identity` chế độ Postgres~~ | ✅ **xong** — migration `0002` |
 | ~~`admin_audit_log`~~ | ~~truy vết thao tác quản trị~~ | ✅ **xong** — migration `0003` |
-| `settlement_batches` + `ledger_entries.settlement_batch_id` | job đối soát/chi trả, chống double-pay | **P1** |
+| ~~`settlement_batches`~~ | ✅ đã có (migration 0007) | — |
 | `driver_status_history` | tranh chấp "lúc đó tôi đang online" | **P1** |
 | `document_expiry_alerts` | hạn đăng kiểm / bảo hiểm TNDS / GPLX | **P1** |
 | `invoices` | hoá đơn điện tử — Nghị định 123/2020 | **P2** |
-| `payment_transactions` | webhook MoMo/ZaloPay/VNPay + đối soát cuối ngày | **P2** |
+| ~~`payment_transactions`~~ | ✅ đã có (migration 0007) | — |
 | `promotions` / `vouchers` / `voucher_redemptions` | dùng `PROMO_EXPENSE` đã có sẵn | **P3** |
 | `fraud_flags` | hiện gom in-memory, mất khi restart | **P2** |
 
@@ -204,7 +207,22 @@ Nếu hai giá trị lệch nhau — sổ cái đúng, cache sai.
 | `driver_locations` | 30–90 ngày (chỉ ảnh chụp mới nhất) | tối thiểu hoá dữ liệu — NĐ 13/2023 |
 | `accounts`, `drivers` | tới khi xoá tài khoản + thời hạn luật định | NĐ 13/2023 — quyền xoá dữ liệu |
 
-**Dữ liệu nhạy cảm cần mã hoá ở tầng ứng dụng** (hiện đang lưu thô):
-`drivers.national_id` (CCCD), `drivers.driver_license` (GPLX), `drivers.vehicle_reg_no`.
+✅ **Dữ liệu nhạy cảm đã được mã hoá ở tầng ứng dụng** (migration 0008, GĐ 4):
+`drivers.national_id`, `driver_license`, `vehicle_reg_no`, `insurance_no` — AES-256-GCM với nonce
+ngẫu nhiên, tiền tố `enc:v1:`.
+
+Vì sao mã hoá ở tầng ứng dụng chứ không chỉ bật mã hoá đĩa: mã hoá đĩa bảo vệ khi ai đó **lấy được
+ổ cứng**, nhưng không bảo vệ khi **bản sao lưu bị lộ**, khi một câu `SELECT` của tài khoản có quyền
+quá rộng, hay khi có lỗ hổng SQL injection.
+
+GCM chứ không phải CBC vì GCM **có xác thực**: mọi sửa đổi bản mã đều làm giải mã thất bại. Và giải
+mã thất bại phải **báo lỗi**, không được trả chuỗi rỗng — trả rỗng biến một sự cố bảo mật thành
+"hồ sơ thiếu giấy tờ", một triệu chứng dẫn người tìm lỗi đi sai hướng.
+
+Nonce ngẫu nhiên nên không so khớp trực tiếp được. Cột `national_id_idx` là **chỉ mục mù**
+(HMAC-SHA256, khoá tách riêng) để trả lời "số CCCD này đã đăng ký chưa" mà không lưu số gốc.
+
+**Khoá `DOCUMENTS_KEY` phải sao lưu RIÊNG, không để chung với bản sao lưu CSDL** — để chung thì
+mất một là mất cả hai, mà lộ một là lộ cả hai.
 `Driver.Documents` đã được gắn `json:"-"` nên không lọt ra API công khai
 ([driver/domain.go:70](../godrive/internal/driver/domain.go#L72)) — nhưng trong CSDL vẫn là plaintext.

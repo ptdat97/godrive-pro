@@ -41,6 +41,14 @@ type LocationPort interface {
 	FraudCount(driverID string, within time.Duration) int
 }
 
+// RevokerPort thu hồi phiên đăng nhập của một tài khoản.
+//
+// Từ chối hồ sơ mà không thu hồi token thì tài xế đó vẫn nhận chuyến được tới
+// khi token hết hạn — có thể tới 24 giờ sau khi bị từ chối.
+type RevokerPort interface {
+	RevokeAccount(ctx context.Context, accountID string, now time.Time, maxTTL time.Duration) error
+}
+
 type WalletPort interface {
 	DriverBalance(ctx context.Context, driverID string) (money.VND, error)
 	CashOnHand(ctx context.Context, driverID string) (money.VND, error)

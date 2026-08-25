@@ -29,7 +29,13 @@ func MustClaims(ctx context.Context) *Claims {
 	return c
 }
 
-// Require chặn request không có token hợp lệ hoặc sai vai trò.
+// UseRevoker bật kiểm tra thu hồi token.
+//
+// Không gọi thì token chỉ hết hiệu lực khi hết hạn — nghĩa là một tài xế vừa bị
+// khoá vẫn nhận chuyến được tới 24 giờ nữa.
+func (i *Issuer) UseRevoker(r Revoker) { i.revoker = r }
+
+// Require chặn request không có token hợp lệ, sai vai trò, hoặc đã bị thu hồi.
 func (i *Issuer) Require(roles ...Role) httpx.Middleware {
 	allowed := map[Role]bool{}
 	for _, r := range roles {
@@ -50,6 +56,24 @@ func (i *Issuer) Require(roles ...Role) httpx.Middleware {
 			if len(allowed) > 0 && !allowed[c.Role] {
 				httpx.Fail(w, r, errs.E(errs.KindForbidden, "forbidden", "Bạn không có quyền thực hiện thao tác này."))
 				return
+			}
+			if i.revoker != nil {
+				revoked, err := i.revoker.IsRevoked(r.Context(), c)
+				if err != nil {
+					// Không kiểm tra được thì TỪ CHỐI, không cho qua.
+					//
+					// Đây là chỗ hiếm hoi chọn fail-closed: cho qua khi Redis
+					// chết nghĩa là mọi token đã thu hồi lại có hiệu lực trở
+					// lại, đúng vào lúc hệ thống đang có sự cố.
+					httpx.Fail(w, r, errs.E(errs.KindUnauthorized, "revocation_check_failed",
+						"Không xác minh được phiên đăng nhập, vui lòng thử lại."))
+					return
+				}
+				if revoked {
+					httpx.Fail(w, r, errs.E(errs.KindUnauthorized, "token_revoked",
+						"Phiên đăng nhập đã bị thu hồi, vui lòng đăng nhập lại."))
+					return
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), c)))
 		})

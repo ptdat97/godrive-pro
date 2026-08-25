@@ -377,7 +377,8 @@ tâm bản đồ mặc định = Chợ Bến Thành `(10.7725, 106.6980)`
 | `pkg/id` | ID sắp xếp theo thời gian: `prefix_` + base32(ms ‖ random) | Thân thiện B-tree. `HasPrefix` chống nhầm `driverID` vào `tripID` |
 | `pkg/idem` | `Reserve` / `Complete` / **`Release`** | Chỉ có bản bộ nhớ. `Reserve` trả **bản sao** (con trỏ nội bộ thoát ra ngoài khoá từng là data race — [G-29](05-doi-chieu-spec-code.md#g-29)); có quét dọn khoá quá hạn |
 | `pkg/clock` | `Clock` tiêm được + `Mock` cho test | ✅ `location`, `httpx.RateLimit`, `matching.MemoryStore`, và cả `app.NewWithClock` đã tiêm được. 🟡 còn `eventbus`, `outbox`, `pkg/idem`. **Store và Engine phải dùng CHUNG một đồng hồ** — lệch nhau gây lỗi phụ thuộc giờ chạy ([G-30](05-doi-chieu-spec-code.md#g-30)) |
-| `platform/authn` | JWT HS256 tự cài bằng stdlib. `Require(roles…)` middleware | Không có `jti`, không thu hồi được, không refresh token ([G-21](05-doi-chieu-spec-code.md#g-21)) |
+| `platform/authn` | JWT HS256 tự cài bằng stdlib. `Require(roles…)` middleware | ✅ có `jti` và **thu hồi được** (theo token và theo tài khoản, danh sách chặn Redis). Kiểm tra thu hồi **fail-closed**: không kiểm được thì từ chối. Chưa có refresh token |
+| `pkg/crypt` | AES-256-GCM cho dữ liệu cá nhân + chỉ mục mù HMAC | Nonce ngẫu nhiên mỗi lần; giải mã thất bại **báo lỗi**, không trả rỗng |
 | `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | ✅ mới ở GĐ 0. Mọi `go func()` chạy code nghiệp vụ đều phải mở đầu bằng nó |
 | `platform/httpx` | `JSON`, `Fail`, `Decode` (giới hạn 1MB + `DisallowUnknownFields`), `RequestID`/`Logging`/`Recover`/`RateLimit` | ✅ rate limit nay dọn bucket nguội (`IdleTTL` 10', `SweepEvery` 1') |
 | `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | Mới từ GĐ 0. **Mọi `go func()` chạy code nghiệp vụ phải mở đầu bằng nó** |

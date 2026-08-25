@@ -20,6 +20,7 @@ import (
 	"github.com/example/godrive/internal/matching"
 	"github.com/example/godrive/internal/notification"
 	"github.com/example/godrive/internal/outbox"
+	"github.com/example/godrive/internal/payment"
 	"github.com/example/godrive/internal/platform/authn"
 	"github.com/example/godrive/internal/platform/eventbus"
 	"github.com/example/godrive/internal/platform/httpx"
@@ -28,6 +29,7 @@ import (
 	"github.com/example/godrive/internal/trip"
 	"github.com/example/godrive/internal/wallet"
 	"github.com/example/godrive/pkg/clock"
+	"github.com/example/godrive/pkg/crypt"
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/idem"
 )
@@ -47,13 +49,20 @@ type App struct {
 	Wallet   *wallet.Service
 	Matcher  *matching.Engine
 	Admin    *admin.Service
-	Surge    *pricing.DemandSurge
+	Payments *payment.Service
+	// Settlement khác nil ở chế độ Postgres. Đối soát và chi trả cần bảng
+	// settlement_batches để chống trả tiền hai lần.
+	Settlement *wallet.Settlement
+	Surge      *pricing.DemandSurge
 	// Outbox khác nil ở chế độ Postgres. StartWorkers tự chạy relay.
 	Outbox *outbox.PostgresStore
 	// Redis khác nil khi có REDIS_URL. Không có thì các store nóng chạy bằng
 	// bộ nhớ tiến trình và hệ thống chỉ đúng với một bản sao.
 	Redis   *redisx.Client
 	Metrics *appMetrics
+	// Revoker khác nil khi có Redis. Không có nó thì token chỉ hết hiệu lực
+	// khi hết hạn — tài xế vừa bị khoá vẫn nhận chuyến được tới 24 giờ.
+	Revoker *authn.RedisRevoker
 	// MQTT khác nil khi có MQTT_URL. Luồng vị trí chính đi qua đây; endpoint
 	// HTTP /v1/locations/ping vẫn giữ làm đường dự phòng.
 	MQTT *location.MQTTConsumer
@@ -103,6 +112,15 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	}
 	issuer := authn.NewIssuer(cfg.JWTSecret, cfg.AccessTTL)
 
+	var revoker *authn.RedisRevoker
+	if rdb != nil {
+		revoker = authn.NewRedisRevoker(rdb.Raw(), redisx.KeyPrefix)
+		issuer.UseRevoker(revoker)
+	} else if !cfg.InMemory() {
+		log.Warn("chưa cấu hình REDIS_URL: không thu hồi được token — " +
+			"đăng xuất chỉ xoá token ở phía client, tài xế bị khoá vẫn dùng token cũ tới khi hết hạn")
+	}
+
 	var (
 		db         *sql.DB
 		driverRepo driver.Repository
@@ -129,6 +147,18 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		// Bỏ sót nhánh này từng làm bảng accounts không bao giờ được ghi, kéo
 		// theo cả đăng ký tài xế lẫn đặt chuyến hỏng vì khoá ngoại.
 		idRepo = identity.NewPostgresRepo(conn)
+
+		// Mã hoá giấy tờ ở tầng ứng dụng. Không có khoá thì giấy tờ lưu thô —
+		// chấp nhận được ở dev, và config.Load() đã chặn ở production.
+		if cfg.DocumentsKey != "" {
+			c, err := crypt.New(cfg.DocumentsKey)
+			if err != nil {
+				return nil, err
+			}
+			driverRepo.(*driver.PostgresRepo).UseCipher(c)
+		} else {
+			log.Warn("chưa cấu hình DOCUMENTS_KEY: số CCCD và GPLX lưu dạng THÔ trong CSDL")
+		}
 	}
 
 	// Transactional Outbox: sự kiện ghi cùng transaction nghiệp vụ, relay phát
@@ -214,11 +244,41 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		offerStore, etaEngine, walletSvc, bus, clk,
 	)
 
+	// Cổng thanh toán: chỉ bật cổng nào có đủ khoá bí mật.
+	//
+	// Bật một cổng mà thiếu khoá nghĩa là mở một endpoint webhook không xác
+	// thực được gì — tệ hơn hẳn việc không bật.
+	var providers []payment.Provider
+	if cfg.MoMoSecretKey != "" {
+		providers = append(providers, payment.NewMoMo(cfg.MoMoPartnerCode, cfg.MoMoAccessKey, cfg.MoMoSecretKey))
+	}
+	if cfg.ZaloPayKey2 != "" {
+		providers = append(providers, payment.NewZaloPay(cfg.ZaloPayAppID, cfg.ZaloPayKey2))
+	}
+	if cfg.VNPayHashSecret != "" {
+		providers = append(providers, payment.NewVNPay(cfg.VNPayTmnCode, cfg.VNPayHashSecret))
+	}
+
+	var paySvc *payment.Service
+	var settlement *wallet.Settlement
+	if db != nil {
+		paySvc = payment.NewService(payment.NewPostgresRepo(db), walletSvc, clk, providers...)
+		settlement = wallet.NewSettlement(wallet.NewPostgresSettlementStore(db), ledger)
+		if len(providers) == 0 {
+			log.Warn("chưa cấu hình cổng thanh toán nào: tài xế không nạp được tiền để trả công nợ")
+		} else {
+			log.Info("cổng thanh toán đã bật", "providers", paySvc.Providers())
+		}
+	}
+
 	var auditLog admin.AuditLog = admin.NewMemoryAuditLog()
 	if db != nil {
 		auditLog = admin.NewPostgresAuditLog(db)
 	}
 	adminSvc := admin.NewService(driverSvc, tripSvc, adminLocation{svc: locSvc}, walletSvc, auditLog, clk)
+	if revoker != nil {
+		adminSvc.UseRevoker(revoker)
+	}
 	adminAuth := admin.NewAuth(identitySvc, cfg.AdminPhones)
 	if !adminAuth.Enabled() {
 		log.Warn("chưa cấu hình ADMIN_PHONES: bảng điều khiển vận hành sẽ từ chối mọi đăng nhập")
@@ -228,8 +288,9 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		Cfg: cfg, Log: log, Clock: clk, Bus: bus, Issuer: issuer,
 		Identity: identitySvc, Drivers: driverSvc, Location: locSvc,
 		Pricing: pricingSvc, Trips: tripSvc, Wallet: walletSvc, Matcher: matcher,
-		Admin: adminSvc, Surge: surge, Outbox: obx, adminAuth: adminAuth,
-		Redis: rdb, Metrics: newAppMetrics(),
+		Admin: adminSvc, Payments: paySvc, Settlement: settlement,
+		Surge: surge, Outbox: obx, adminAuth: adminAuth,
+		Redis: rdb, Revoker: revoker, Metrics: newAppMetrics(),
 		db: db,
 	}
 	// MQTT cho luồng vị trí. Dựng SAU khi App đã sẵn sàng vì consumer bắt đầu
@@ -289,13 +350,20 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("GET /readyz", a.readyz)
 	mux.Handle("GET /metrics", a.Metrics.reg.Handler())
 
-	identity.NewHandler(a.Identity).Register(mux)
+	identity.NewHandler(a.Identity, a.Issuer, a.Revoker).Register(mux)
 	driver.NewHandler(a.Drivers, a.Issuer).Register(mux)
 	location.NewHandler(a.Location, a.Issuer, a.driverIDFromRequest).Register(mux)
 	pricing.NewHandler(a.Pricing, a.Issuer).Register(mux)
 	trip.NewHandler(a.Trips, a.Issuer, a.driverIDFromRequest).Register(mux)
+	// Endpoint nạp ví thủ công CHỈ còn ở chế độ dev và CHỈ khi chưa có cổng
+	// thanh toán nào — có cổng thật rồi thì không có lý do gì để giữ một đường
+	// tự ghi có vào ví.
+	devTopUp := a.Cfg.DevAuth && (a.Payments == nil || !a.Payments.Enabled())
 	wallet.NewHandler(a.Wallet, a.Issuer, a.driverIDFromRequest,
-		a.Drivers.DebtLimit(), a.Cfg.DevAuth).Register(mux)
+		a.Drivers.DebtLimit(), devTopUp).Register(mux)
+	if a.Payments != nil {
+		payment.NewHandler(a.Payments, a.Issuer, a.driverIDFromRequest).Register(mux)
+	}
 	matching.NewHandler(a.Matcher, a.Issuer, a.driverIDFromRequest).Register(mux)
 	admin.NewHandler(a.Admin, a.Issuer, a.adminAuth).Register(mux)
 

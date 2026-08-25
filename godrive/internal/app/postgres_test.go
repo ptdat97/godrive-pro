@@ -33,6 +33,7 @@ var appTables = []string{
 	"trip_events", "offers", "trips", "driver_locations", "drivers",
 	"otp_challenges", "accounts", "ledger_entries", "ledger_transactions",
 	"idempotency_keys", "outbox", "admin_audit_log", "trip_claims",
+	"payment_transactions", "settlement_items", "settlement_batches",
 }
 
 // mustDB mở một kết nối phụ tới CSDL test.

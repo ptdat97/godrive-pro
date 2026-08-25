@@ -4,6 +4,7 @@
 package authn
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/example/godrive/pkg/errs"
+	"github.com/example/godrive/pkg/id"
 )
 
 type Role string
@@ -27,13 +29,36 @@ type Claims struct {
 	Sub      string `json:"sub"` // account id
 	Role     Role   `json:"role"`
 	DeviceID string `json:"did"`
-	Exp      int64  `json:"exp"`
-	Iat      int64  `json:"iat"`
+	// JTI là mã định danh duy nhất của token này.
+	//
+	// Không có nó thì không thu hồi được token nào cả: JWT tự chứng minh tính
+	// hợp lệ bằng chữ ký, nên máy chủ không có cách nào "quên" một token đã
+	// phát. Đăng xuất chỉ xoá token ở phía client, còn bản sao mà kẻ tấn công
+	// lấy được vẫn dùng tốt tới lúc hết hạn.
+	JTI string `json:"jti"`
+	Exp int64  `json:"exp"`
+	Iat int64  `json:"iat"`
+}
+
+// IssuedAt trả thời điểm phát hành.
+func (c Claims) IssuedAt() time.Time { return time.Unix(c.Iat, 0).UTC() }
+
+// ExpiresAt trả thời điểm hết hạn.
+func (c Claims) ExpiresAt() time.Time { return time.Unix(c.Exp, 0).UTC() }
+
+// Revoker cho biết một token đã bị thu hồi chưa.
+//
+// Port khai báo ở đây (bên tiêu thụ) nên authn không phải biết gì về Redis.
+type Revoker interface {
+	// IsRevoked kiểm tra cả hai đường thu hồi: theo TOKEN (đăng xuất một thiết
+	// bị) và theo TÀI KHOẢN (khoá tài xế, đăng xuất mọi thiết bị).
+	IsRevoked(ctx context.Context, c *Claims) (bool, error)
 }
 
 type Issuer struct {
 	secret    []byte
 	accessTTL time.Duration
+	revoker   Revoker
 }
 
 func NewIssuer(secret string, accessTTL time.Duration) *Issuer {
@@ -43,11 +68,21 @@ func NewIssuer(secret string, accessTTL time.Duration) *Issuer {
 var b64 = base64.RawURLEncoding
 
 func (i *Issuer) Issue(sub string, role Role, deviceID string, now time.Time) (string, time.Time) {
+	tok, exp, _ := i.IssueWithID(sub, role, deviceID, now)
+	return tok, exp
+}
+
+// IssueWithID phát hành token và trả về cả JTI để nơi gọi lưu lại nếu cần.
+func (i *Issuer) IssueWithID(sub string, role Role, deviceID string, now time.Time) (string, time.Time, string) {
 	exp := now.Add(i.accessTTL)
+	jti := id.New("jti")
 	header := b64.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	body, _ := json.Marshal(Claims{Sub: sub, Role: role, DeviceID: deviceID, Exp: exp.Unix(), Iat: now.Unix()})
+	body, _ := json.Marshal(Claims{
+		Sub: sub, Role: role, DeviceID: deviceID, JTI: jti,
+		Exp: exp.Unix(), Iat: now.Unix(),
+	})
 	payload := header + "." + b64.EncodeToString(body)
-	return payload + "." + b64.EncodeToString(i.sign(payload)), exp
+	return payload + "." + b64.EncodeToString(i.sign(payload)), exp, jti
 }
 
 func (i *Issuer) sign(payload string) []byte {

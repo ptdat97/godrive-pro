@@ -41,6 +41,26 @@ type Config struct {
 	// Tuân thủ Nghị định 13/2023: dữ liệu cá nhân phải lưu trong lãnh thổ VN.
 	DataResidency string
 
+	// DocumentsKey là khoá AES-256 (32 byte, hex hoặc base64) mã hoá số CCCD và
+	// GPLX của tài xế. Rỗng => giấy tờ lưu dạng THÔ.
+	//
+	// Sinh khoá mới: openssl rand -hex 32
+	// Mất khoá là mất toàn bộ giấy tờ đã mã hoá — phải sao lưu riêng, không để
+	// chung với bản sao lưu cơ sở dữ liệu.
+	DocumentsKey string
+
+	// Cổng thanh toán. Rỗng => cổng đó không được bật.
+	//
+	// Khoá bí mật ở đây là thứ DUY NHẤT phân biệt webhook thật với một request
+	// bất kỳ ai cũng gửi được — webhook không có xác thực nào khác.
+	MoMoPartnerCode string
+	MoMoAccessKey   string
+	MoMoSecretKey   string
+	ZaloPayAppID    int
+	ZaloPayKey2     string
+	VNPayTmnCode    string
+	VNPayHashSecret string
+
 	// AdminPhones là danh sách số điện thoại được phép đăng nhập bảng điều
 	// khiển vận hành (phân tách bằng dấu phẩy). Rỗng = không ai vào được.
 	// Mặc định đóng: quyền quản trị phải cấp tường minh.
@@ -64,7 +84,16 @@ func Load() (Config, error) {
 		DevAuth:       getBool("DEV_AUTH", true),
 		ShutdownWait:  getDur("SHUTDOWN_WAIT", 15*time.Second),
 		DataResidency: get("DATA_RESIDENCY", "VN"),
+		DocumentsKey:  get("DOCUMENTS_KEY", ""),
 		AdminPhones:   getList("ADMIN_PHONES"),
+
+		MoMoPartnerCode: get("MOMO_PARTNER_CODE", ""),
+		MoMoAccessKey:   get("MOMO_ACCESS_KEY", ""),
+		MoMoSecretKey:   get("MOMO_SECRET_KEY", ""),
+		ZaloPayAppID:    getInt("ZALOPAY_APP_ID", 0),
+		ZaloPayKey2:     get("ZALOPAY_KEY2", ""),
+		VNPayTmnCode:    get("VNPAY_TMN_CODE", ""),
+		VNPayHashSecret: get("VNPAY_HASH_SECRET", ""),
 	}
 	if c.Env == "prod" {
 		if c.JWTSecret == "" || strings.HasPrefix(c.JWTSecret, "dev-") {
@@ -81,6 +110,11 @@ func Load() (Config, error) {
 		// đúng trong phạm vi một tiến trình.
 		if c.RedisURL == "" {
 			return c, fmt.Errorf("config: REDIS_URL bắt buộc ở production (nếu không sẽ chỉ chạy được 1 bản sao)")
+		}
+		// Nghị định 13/2023: số CCCD và GPLX là dữ liệu cá nhân, một lần lộ là
+		// không thu hồi được.
+		if c.DocumentsKey == "" {
+			return c, fmt.Errorf("config: DOCUMENTS_KEY bắt buộc ở production (mã hoá CCCD/GPLX)")
 		}
 	}
 	return c, nil
@@ -117,6 +151,15 @@ func getList(k string) []string {
 func get(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func getInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

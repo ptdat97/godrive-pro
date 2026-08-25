@@ -36,9 +36,13 @@ type Service struct {
 	loc       LocationPort
 	wallet    WalletPort
 	audit     AuditLog
+	revoker   RevokerPort
 	clk       clock.Clock
 	debtLimit money.VND
 }
+
+// UseRevoker bật thu hồi phiên khi từ chối hồ sơ.
+func (s *Service) UseRevoker(r RevokerPort) { s.revoker = r }
 
 func NewService(d DriverPort, t TripPort, l LocationPort, w WalletPort, a AuditLog, clk clock.Clock) *Service {
 	return &Service{drivers: d, trips: t, loc: l, wallet: w, audit: a, clk: clk, debtLimit: driver.DefaultDebtLimit}
@@ -160,6 +164,16 @@ func (s *Service) ReviewKYC(ctx context.Context, actor Actor, driverID string, a
 	if err := s.drivers.ReviewKYC(ctx, driverID, approved); err != nil {
 		return nil, err
 	}
+	// Từ chối hồ sơ: thu hồi mọi phiên của tài xế đó NGAY.
+	//
+	// Không làm bước này thì quyết định từ chối chỉ có hiệu lực khi token hết
+	// hạn — tới 24 giờ sau, và trong khoảng đó họ vẫn nhận chuyến bình thường.
+	if !approved && s.revoker != nil {
+		if err := s.revoker.RevokeAccount(ctx, before.AccountID, s.clk.Now(), 30*24*time.Hour); err != nil {
+			return nil, err
+		}
+	}
+
 	if s.audit != nil {
 		entry := NewAuditEntry(actor.AccountID, actor.Phone, ActionReviewKYC,
 			TargetDriver, driverID, map[string]any{

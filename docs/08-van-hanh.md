@@ -52,6 +52,10 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `SHUTDOWN_WAIT` | `15s` | thời gian tắt êm |
 | `DATA_RESIDENCY` | `VN` | ghi chú tuân thủ NĐ 13/2023 |
 | **`ADMIN_PHONES`** | *(rỗng)* | danh sách SĐT được vào bảng điều khiển, ngăn cách bằng dấu phẩy. **Rỗng = không ai vào được** |
+| **`DOCUMENTS_KEY`** | *(rỗng)* | Khoá AES-256 (32 byte hex hoặc base64) mã hoá CCCD/GPLX. Rỗng ⇒ lưu **thô**. Sinh: `openssl rand -hex 32` |
+| `MOMO_PARTNER_CODE` / `MOMO_ACCESS_KEY` / `MOMO_SECRET_KEY` | *(rỗng)* | Bật cổng MoMo. Thiếu `SECRET_KEY` ⇒ cổng **không** được bật |
+| `ZALOPAY_APP_ID` / `ZALOPAY_KEY2` | *(rỗng)* | Bật cổng ZaloPay |
+| `VNPAY_TMN_CODE` / `VNPAY_HASH_SECRET` | *(rỗng)* | Bật cổng VNPay |
 
 ### Chốt chặn ở production
 
@@ -63,6 +67,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `DEV_AUTH` còn bật | `DEV_AUTH phải tắt ở production` |
 | `DATABASE_URL` rỗng | `DATABASE_URL bắt buộc ở production` |
 | `REDIS_URL` rỗng | `REDIS_URL bắt buộc ở production (nếu không sẽ chỉ chạy được 1 bản sao)` |
+| `DOCUMENTS_KEY` rỗng | `DOCUMENTS_KEY bắt buộc ở production (mã hoá CCCD/GPLX)` |
 
 > Đây là chốt chặn tốt nhưng **chưa đủ**: `ADMIN_PHONES` rỗng ở production chỉ log warning
 > chứ không chặn khởi động. Cân nhắc nâng thành lỗi cứng.
@@ -231,6 +236,11 @@ SELECT t.id FROM trips t
 LEFT JOIN trip_events e ON e.trip_id = t.id
 GROUP BY t.id, t.status HAVING count(e.id) = 0;
 
+-- SỨC KHOẺ: giao dịch cổng thanh toán treo ở PENDING quá lâu.
+-- Bình thường job ExpireStale dọn; số này tăng đều nghĩa là job không chạy.
+SELECT count(*) FROM payment_transactions
+WHERE status = 'PENDING' AND expires_at < now();
+
 -- BẤT BIẾN #5: mỗi chuyến chỉ có một offer ACCEPTED. Phải trả 0 dòng.
 SELECT trip_id, count(*) FROM offers
 WHERE status='ACCEPTED' GROUP BY trip_id HAVING count(*) > 1;
@@ -251,7 +261,21 @@ SELECT count(*) FROM ledger_entries e
 LEFT JOIN ledger_transactions t ON t.tx_id = e.tx_id
 WHERE t.tx_id IS NULL;
 
--- BẤT BIẾN #7: một chuyến chỉ được ghi sổ MỘT lần, kể cả khi sự kiện bị giao
+-- BẤT BIẾN #7: một tài xế chỉ được CHI TRẢ một lần trong một đợt. Phải trả 0 dòng.
+--
+-- Trả tiền hai lần là loại sai sót không sửa được bằng cách xin lỗi.
+SELECT account_id, ref_id, count(*) FROM ledger_entries
+WHERE ref_type = 'PAYOUT' AND account_type = 'DRIVER_WALLET'
+GROUP BY account_id, ref_id HAVING count(*) > 1;
+
+-- BẤT BIẾN #8: giấy tờ phải nằm MÃ HOÁ. Phải trả 0 dòng.
+--
+-- Chạy câu này sau mỗi lần triển khai: quên đặt DOCUMENTS_KEY là một cấu hình
+-- sai âm thầm — hệ thống vẫn chạy bình thường, chỉ có dữ liệu là nằm thô.
+SELECT id FROM drivers
+WHERE national_id <> '' AND national_id NOT LIKE 'enc:v1:%';
+
+-- BẤT BIẾN #9: một chuyến chỉ được ghi sổ MỘT lần, kể cả khi sự kiện bị giao
 -- lại sau khi pod xử lý nó chết. Phải trả 0 dòng.
 SELECT ref_id, count(*) FROM ledger_transactions
 WHERE ref_type = 'TRIP' GROUP BY ref_id HAVING count(*) > 1;
@@ -300,7 +324,10 @@ ORDER BY 2;
 - [ ] Biểu giá khớp **hồ sơ kê khai giá cước đã nộp** — không phải bảng mẫu TP.HCM trong code
 - [ ] Chính sách lưu trữ theo [02 §2.7](02-mo-hinh-du-lieu.md): `trip_events` ≥ 3 năm, `ledger_entries` ≥ 10 năm
 - [ ] Dữ liệu cá nhân lưu trong lãnh thổ VN (NĐ 13/2023, NĐ 53/2022)
-- [ ] CCCD / GPLX đã mã hoá ở tầng ứng dụng ([T-24](07-todo.md#t-24))
+- [x] CCCD / GPLX đã mã hoá ở tầng ứng dụng ✅ GĐ 4 — kiểm bằng bất biến #8 ở §8.7
+- [ ] `DOCUMENTS_KEY` đã **sao lưu riêng**, không để chung với bản sao lưu CSDL
+- [ ] Khoá bí mật của cổng thanh toán lấy từ kho bí mật, **không** nằm trong biến môi trường thô
+- [ ] Đã thử một webhook **giả mạo chữ ký** trên staging và xác nhận bị từ chối + có log
 - [ ] `TaxPermille` chỉ bật **sau khi kế toán thuế xác nhận**
 
 ### Vận hành
@@ -334,3 +361,43 @@ ORDER BY 2;
 > **Nhãn có số giá trị hữu hạn.** `route` được đưa về khuôn mẫu (`/v1/trips/{id}`) trước khi làm
 > nhãn. Đưa thẳng `URL.Path` vào nhãn là cách chắc chắn làm nổ Prometheus: mỗi chuyến đi sẽ tạo một
 > chuỗi số liệu mới và không bao giờ được thu hồi.
+
+
+---
+
+## 8.10 Vận hành đối soát và chi trả
+
+Hai bước tách rời, **cố ý**: kế toán phải xem được danh sách trước khi tiền rời khỏi tài khoản.
+
+```
+1. Calculate(kỳ)   chốt danh sách → trạng thái CALCULATED
+                   (kỳ phải đã KẾT THÚC — số dư của kỳ đang chạy còn thay đổi)
+2. người xem lại   SELECT * FROM settlement_items WHERE batch_id = ...
+3. Pay(đợt)        ghi bút toán chi trả → trạng thái PAID
+```
+
+Chạy lại bước nào cũng an toàn: `Calculate` cho cùng kỳ trả về đợt cũ, `Pay` cho đợt đã trả
+không chi thêm đồng nào.
+
+```sql
+-- Đợt gần nhất và tình hình từng dòng
+SELECT b.id, b.period_start, b.period_end, b.status, b.driver_count, b.total_vnd,
+       count(*) FILTER (WHERE i.status = 'PAID')    AS da_tra,
+       count(*) FILTER (WHERE i.status = 'SKIPPED') AS duoi_nguong,
+       count(*) FILTER (WHERE i.status = 'FAILED')  AS that_bai
+FROM settlement_batches b LEFT JOIN settlement_items i ON i.batch_id = b.id
+GROUP BY b.id ORDER BY b.created_at DESC LIMIT 5;
+
+-- Dòng THẤT BẠI cần xử lý tay
+SELECT driver_id, amount_vnd, reason FROM settlement_items
+WHERE status = 'FAILED' ORDER BY created_at DESC;
+
+-- Đối soát với sao kê cổng thanh toán cho một ngày
+SELECT provider, status, count(*), sum(amount_vnd)
+FROM payment_transactions
+WHERE created_at >= date_trunc('day', now()) GROUP BY provider, status;
+```
+
+> **`FAILED` khác `SKIPPED`.** `SKIPPED` là dưới ngưỡng chi trả — bình thường, số dư giữ lại cho
+> đợt sau. `FAILED` là ghi sổ hỏng sau khi đã giành quyền chi — cần người xem, vì dòng đó đã bị
+> đánh dấu rồi trả về thất bại.

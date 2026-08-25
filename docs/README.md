@@ -17,11 +17,11 @@
 |---|---|
 | Module Go | `github.com/example/godrive`, `go 1.22` |
 | Phụ thuộc ngoài | **4**: `pgx/v5` · `go-redis/v9` · `nats.go` · `paho.mqtt.golang` |
-| File `.go` | **101** |
-| Dòng mã (không tính test) | **10.193** |
-| Migration | **6** (`0001` … `0006`) |
+| File `.go` | **116** |
+| Dòng mã (không tính test) | **11.916** |
+| Migration | **8** (`0001` … `0008`) |
 | `go build` / `go vet` / `gofmt -l` | ✅ sạch |
-| `go test ./...` | ✅ **102 pass** (in-memory) · **126 pass** (đủ Postgres + Redis + NATS + MQTT) |
+| `go test ./...` | ✅ **118 pass** (in-memory) · **157 pass** (đủ hạ tầng) |
 | `go test -race ./... -count=6` | ✅ pass toàn bộ, không flake |
 | Độ phủ toàn dự án | **63,4%** |
 | Chế độ chạy được đầu-cuối | in-memory · Postgres · **+ Redis + NATS + MQTT, nhiều bản sao** |
@@ -39,7 +39,7 @@
 | [GĐ 1 — Bền dữ liệu & đúng tiền](06-ke-hoach-trien-khai.md) | ✅ **xong** | Sổ cái Postgres · cổng chặn công nợ hoạt động thật · ghi sổ phí huỷ · bỏ hết float khỏi đường tiền · API ví · nhật ký thao tác admin |
 | [GĐ 2 — Đúng nghiệp vụ](06-ke-hoach-trien-khai.md) | ✅ **xong** | Chỉ số tài xế sống · `IdleSince` đo đúng · surge phản ứng cầu thật · Transactional Outbox (at-least-once) · offers + khoá chuyến xuống Postgres |
 | [GĐ 3 — Hạ tầng thật](06-ke-hoach-trien-khai.md) | ✅ **xong phần hạ tầng** | ✅ Redis (vị trí GEO, khoá chuyến, lời mời, báo giá, idempotency, rate limit toàn cụm) · ✅ **NATS JetStream** (ack — giết pod giữa chừng không mất việc) · ✅ **MQTT/EMQX** (luồng vị trí + Last Will) · ✅ OSRM `/route` + `/table` · ✅ metrics + `/readyz`<br>⬜ push FCM/APNs · H3 · tracing |
-| [GĐ 4 — Thương mại](06-ke-hoach-trien-khai.md) | ⬜ chưa | Cổng thanh toán · đối soát · hoá đơn điện tử · eKYC |
+| [GĐ 4 — Thương mại](06-ke-hoach-trien-khai.md) | 🟡 **một phần** | ✅ Cổng thanh toán MoMo/ZaloPay/VNPay (xác thực chữ ký thật) · ✅ Đối soát & chi trả idempotent · ✅ Mã hoá CCCD/GPLX (NĐ 13/2023) · ✅ Thu hồi token<br>⬜ hoá đơn điện tử · eKYC · theo dõi hạn giấy tờ · SOS |
 | [GĐ 5 — Quy mô](06-ke-hoach-trien-khai.md) | ⬜ chưa | Tách service · khuyến mãi · chống gian lận nâng cao |
 
 > **Nguyên tắc xuyên suốt.** Không giao thứ chưa chạy thử được. **8 lỗi nghiêm trọng nhất của dự
@@ -89,11 +89,18 @@
    tiết kiệm pin trên máy Android giá rẻ và có Last Will.
    Mất Redis là mất hiệu năng; mất Postgres là mất dữ liệu.
 
-5. **Consumer sự kiện phải có TÊN và phải idempotent.** Tên là danh tính của
+5. **Webhook cổng thanh toán có ba chốt chặn, không được bỏ chốt nào.**
+   ① xác thực chữ ký — webhook là endpoint công khai, chữ ký là thứ duy nhất
+   phân biệt thông báo thật với request bất kỳ ai cũng gửi được;
+   ② đối chiếu số tiền với ý định đã ghi trước — chữ ký chứng minh thông báo đến
+   *từ* cổng, không chứng minh số tiền *đúng*;
+   ③ idempotent — cổng gửi lại webhook là hành vi bình thường.
+
+6. **Consumer sự kiện phải có TÊN và phải idempotent.** Tên là danh tính của
    consumer ở broker; nhiều pod cùng tên tạo thành một nhóm, mỗi thông điệp xử
    lý đúng một lần trên toàn cụm. Nhưng `ack` có thể thất bại sau khi việc đã
    xong, nên **mọi handler đều phải chịu được việc chạy lại**.
 
-6. **Không suy trạng thái tài xế từ sự kiện nào vừa tới.** Bus phát bất đồng bộ nên sự kiện có thể
+7. **Không suy trạng thái tài xế từ sự kiện nào vừa tới.** Bus phát bất đồng bộ nên sự kiện có thể
    đến sai thứ tự. Luôn đọc trạng thái **hiện tại** của chuyến rồi mới đặt trạng thái tài xế
    (`app.syncDriverStatus`). Bản cũ làm ngược lại và để tài xế kẹt vĩnh viễn ở `ON_TRIP` trong ~10% số chuyến.

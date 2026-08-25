@@ -55,16 +55,21 @@ func (l *PostgresLedger) Post(ctx context.Context, tx Transaction) error {
 
 	stmt, err := dbtx.PrepareContext(ctx, `
         INSERT INTO ledger_entries
-            (id, tx_id, account_id, account_type, amount_vnd, ref_type, ref_id, memo, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`)
+            (id, tx_id, account_id, account_type, amount_vnd, ref_type, ref_id, memo, created_at,
+             settlement_batch_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`)
 	if err != nil {
 		return errs.Wrap(errs.KindInternal, "db_error", "db", err)
 	}
 	defer func() { _ = stmt.Close() }()
 
 	for _, e := range tx.Entries {
+		var batch any
+		if tx.BatchID != "" {
+			batch = tx.BatchID
+		}
 		if _, err := stmt.ExecContext(ctx, e.ID, e.TxID, e.AccountID, e.AccountType,
-			int64(e.Amount), e.RefType, e.RefID, e.Memo, e.CreatedAt); err != nil {
+			int64(e.Amount), e.RefType, e.RefID, e.Memo, e.CreatedAt, batch); err != nil {
 			return errs.Wrap(errs.KindInternal, "db_error", "db", err)
 		}
 	}
