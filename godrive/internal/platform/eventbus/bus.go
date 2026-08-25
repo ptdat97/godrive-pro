@@ -43,8 +43,29 @@ type Handler func(ctx context.Context, e Event) error
 
 type Bus interface {
 	Publish(ctx context.Context, topic string, payload any) error
-	Subscribe(topic string, h Handler)
+
+	// Subscribe đăng ký một consumer CÓ TÊN cho topic.
+	//
+	// Vì sao phải có tên: với broker thật (NATS JetStream), tên chính là danh
+	// tính của consumer — vị trí đã đọc tới đâu được lưu theo tên đó. Tên phải
+	// ỔN ĐỊNH giữa các lần khởi động; đổi tên nghĩa là tạo consumer mới và đọc
+	// lại từ đầu.
+	//
+	// Nhiều tiến trình cùng đăng ký một cặp (topic, name) tạo thành MỘT NHÓM:
+	// mỗi thông điệp được xử lý đúng một lần trên toàn cụm, không phải một lần
+	// cho mỗi pod. Muốn hai việc khác nhau cùng nghe một topic thì đặt HAI tên
+	// khác nhau.
+	Subscribe(topic, name string, h Handler)
+
+	// Close ngừng nhận thông điệp mới rồi chờ handler đang chạy xong.
 	Close()
+}
+
+// HealthChecker là Bus tự kiểm tra được sức khoẻ của mình.
+//
+// Port khai báo ở đây để /readyz không phải biết Bus đang là bản nào.
+type HealthChecker interface {
+	Ping(ctx context.Context) error
 }
 
 func NewEvent(topic string, payload any) (Event, error) {
@@ -123,7 +144,10 @@ func (b *inMemory) Publish(ctx context.Context, topic string, payload any) error
 	return nil
 }
 
-func (b *inMemory) Subscribe(topic string, h Handler) {
+// Subscribe: bản in-memory bỏ qua name (không có trạng thái consumer để lưu),
+// nhưng vẫn nhận tham số để chữ ký giống bản NATS — nếu không, đổi sang broker
+// thật sẽ phải sửa mọi nơi gọi.
+func (b *inMemory) Subscribe(topic, _ string, h Handler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.subs[topic] = append(b.subs[topic], h)

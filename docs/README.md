@@ -16,17 +16,17 @@
 | Hạng mục | Số liệu đã kiểm chứng |
 |---|---|
 | Module Go | `github.com/example/godrive`, `go 1.22` |
-| Phụ thuộc ngoài | **2**: `pgx/v5` (Postgres), `go-redis/v9` (Redis) |
-| File `.go` | **98** |
-| Dòng mã (không tính test) | **9.668** |
+| Phụ thuộc ngoài | **4**: `pgx/v5` · `go-redis/v9` · `nats.go` · `paho.mqtt.golang` |
+| File `.go` | **101** |
+| Dòng mã (không tính test) | **10.193** |
 | Migration | **6** (`0001` … `0006`) |
 | `go build` / `go vet` / `gofmt -l` | ✅ sạch |
-| `go test ./...` | ✅ **102 pass** (in-memory) · **119 pass** (đủ Postgres + Redis) |
+| `go test ./...` | ✅ **102 pass** (in-memory) · **126 pass** (đủ Postgres + Redis + NATS + MQTT) |
 | `go test -race ./... -count=6` | ✅ pass toàn bộ, không flake |
 | Độ phủ toàn dự án | **63,4%** |
-| Chế độ chạy được đầu-cuối | in-memory · Postgres · **Postgres + Redis, nhiều bản sao** |
-| Nhiều bản sao | ✅ kiểm chứng với **2 tiến trình thật** dùng chung Postgres + Redis |
-| Quan sát | `/metrics` (Prometheus) · `/readyz` kiểm thật DB + Redis |
+| Chế độ chạy được đầu-cuối | in-memory · Postgres · **+ Redis + NATS + MQTT, nhiều bản sao** |
+| Nhiều bản sao | ✅ **2 tiến trình thật**; **SIGKILL một pod giữa chừng không mất việc** |
+| Quan sát | `/metrics` (Prometheus) · `/readyz` kiểm thật **Postgres, Redis, NATS, MQTT** |
 | Bất biến kiểm trên CSDL | **9 câu SQL**, đều sạch sau mỗi lần chạy đầu-cuối |
 
 ---
@@ -38,15 +38,16 @@
 | [GĐ 0 — Sửa nền](06-ke-hoach-trien-khai.md) | ✅ **xong** | Chạy được với Postgres · giấy tờ tài xế lưu trọn vẹn · goroutine nền có `recover` · dọn rò rỉ bộ nhớ |
 | [GĐ 1 — Bền dữ liệu & đúng tiền](06-ke-hoach-trien-khai.md) | ✅ **xong** | Sổ cái Postgres · cổng chặn công nợ hoạt động thật · ghi sổ phí huỷ · bỏ hết float khỏi đường tiền · API ví · nhật ký thao tác admin |
 | [GĐ 2 — Đúng nghiệp vụ](06-ke-hoach-trien-khai.md) | ✅ **xong** | Chỉ số tài xế sống · `IdleSince` đo đúng · surge phản ứng cầu thật · Transactional Outbox (at-least-once) · offers + khoá chuyến xuống Postgres |
-| [GĐ 3 — Hạ tầng thật](06-ke-hoach-trien-khai.md) | 🟡 **một phần** | ✅ Redis: chỉ mục vị trí GEO, khoá giành chuyến, lời mời, báo giá, idempotency, rate limit toàn cụm · ✅ OSRM `/route` + `/table` (một request cho cả lô) · ✅ metrics + `/readyz`<br>⬜ NATS · MQTT · push FCM/APNs · H3 · tracing |
+| [GĐ 3 — Hạ tầng thật](06-ke-hoach-trien-khai.md) | ✅ **xong phần hạ tầng** | ✅ Redis (vị trí GEO, khoá chuyến, lời mời, báo giá, idempotency, rate limit toàn cụm) · ✅ **NATS JetStream** (ack — giết pod giữa chừng không mất việc) · ✅ **MQTT/EMQX** (luồng vị trí + Last Will) · ✅ OSRM `/route` + `/table` · ✅ metrics + `/readyz`<br>⬜ push FCM/APNs · H3 · tracing |
 | [GĐ 4 — Thương mại](06-ke-hoach-trien-khai.md) | ⬜ chưa | Cổng thanh toán · đối soát · hoá đơn điện tử · eKYC |
 | [GĐ 5 — Quy mô](06-ke-hoach-trien-khai.md) | ⬜ chưa | Tách service · khuyến mãi · chống gian lận nâng cao |
 
-> **Vì sao GĐ 3 dừng ở đây.** Bốn hạng mục còn lại **không kiểm chứng được** trên máy phát triển
-> này: không có Docker, không có NATS/EMQX nào đang chạy, và push cần credential thật của
-> FCM/APNs. Viết code cho chúng mà không chạy thử được thì chỉ là đoán — và bài học lớn nhất
-> của ba giai đoạn trước đúng là ở chỗ đó: **7 lỗi nghiêm trọng nhất đều chỉ lộ ra khi chạy thật**,
-> không lỗi nào tìm thấy bằng cách đọc code.
+> **Nguyên tắc xuyên suốt.** Không giao thứ chưa chạy thử được. **8 lỗi nghiêm trọng nhất của dự
+> án đều chỉ lộ ra khi chạy thật** — năm trong số đó là cuộc đua hoặc lỗi thứ tự mà đọc code không
+> thấy được. Vì vậy NATS và MQTT chỉ được viết sau khi có broker thật để kiểm chứng.
+>
+> **Còn lại của GĐ 3:** push FCM/APNs (cần credential thật của Google/Apple), H3 (Redis GEO đã lo
+> phần chỉ mục không gian nên giá trị giảm hẳn), và tracing OpenTelemetry.
 
 ---
 
@@ -81,11 +82,18 @@
    **cùng một transaction** (`Repository.Save(ctx, trip, event, msgs...)`). Đây là hợp đồng vận tải
    điện tử theo Nghị định 10/2020 — lưu ≥ 3 năm.
 
-4. **Redis giữ dữ liệu NÓNG, Postgres giữ SỰ THẬT.** Vị trí tài xế, khoá giành
-   chuyến, lời mời, báo giá, khoá idempotency và bộ đếm rate limit nằm ở Redis vì
-   chúng ghi rất nhiều và sống rất ngắn. Tiền, chuyến và nhật ký nằm ở Postgres.
+4. **Mỗi hạ tầng một việc.** Postgres giữ **sự thật** (tiền, chuyến, nhật ký).
+   Redis giữ **dữ liệu nóng** ghi nhiều sống ngắn (vị trí, khoá chuyến, lời mời,
+   báo giá, idempotency, rate limit). NATS giữ **sự kiện có ack** — đây là thứ
+   khiến giết pod giữa chừng không mất việc. MQTT giữ **luồng vị trí** vì nó
+   tiết kiệm pin trên máy Android giá rẻ và có Last Will.
    Mất Redis là mất hiệu năng; mất Postgres là mất dữ liệu.
 
-5. **Không suy trạng thái tài xế từ sự kiện nào vừa tới.** Bus phát bất đồng bộ nên sự kiện có thể
+5. **Consumer sự kiện phải có TÊN và phải idempotent.** Tên là danh tính của
+   consumer ở broker; nhiều pod cùng tên tạo thành một nhóm, mỗi thông điệp xử
+   lý đúng một lần trên toàn cụm. Nhưng `ack` có thể thất bại sau khi việc đã
+   xong, nên **mọi handler đều phải chịu được việc chạy lại**.
+
+6. **Không suy trạng thái tài xế từ sự kiện nào vừa tới.** Bus phát bất đồng bộ nên sự kiện có thể
    đến sai thứ tự. Luôn đọc trạng thái **hiện tại** của chuyến rồi mới đặt trạng thái tài xế
    (`app.syncDriverStatus`). Bản cũ làm ngược lại và để tài xế kẹt vĩnh viễn ở `ON_TRIP` trong ~10% số chuyến.

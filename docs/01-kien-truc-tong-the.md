@@ -30,16 +30,24 @@
 Redis 6379 — **cả hai đều đã nối vào code và kiểm chứng đầu-cuối**.
 Schema tạo được qua [`scripts/setup-db.sh`](../godrive/scripts/setup-db.sh).
 
-### Dữ liệu nằm ở đâu, và vì sao
+### Mỗi hạ tầng một việc
 
-| | Postgres | Redis |
-|---|---|---|
-| Giữ gì | tài khoản, tài xế, chuyến, `trip_events`, **sổ cái**, offers, nhật ký admin, outbox | vị trí tài xế (GEO), khoá giành chuyến, lời mời, báo giá, khoá idempotency, bộ đếm rate limit |
-| Đặc điểm | ghi vừa phải, sống lâu, **phải bền** | ghi rất nhiều, sống rất ngắn (15 giây – 5 phút) |
-| Mất thì sao | **mất dữ liệu** | mất hiệu năng, không mất dữ liệu |
+| | Giữ gì | Đặc điểm | Mất thì sao |
+|---|---|---|---|
+| **Postgres** | tài khoản, tài xế, chuyến, `trip_events`, **sổ cái**, offers, nhật ký admin, outbox | ghi vừa phải, sống lâu, **phải bền** | **mất dữ liệu** |
+| **Redis** | vị trí tài xế (GEO), khoá giành chuyến, lời mời, báo giá, idempotency, rate limit | ghi rất nhiều, sống rất ngắn (15 giây – 5 phút) | mất hiệu năng |
+| **NATS** | sự kiện nghiệp vụ, **có ack** | mỗi thông điệp phải được xử lý xong | việc đang xử lý bị kẹt tới khi NATS trở lại |
+| **MQTT** | luồng ping vị trí từ thiết bị | ghi liên tục, mỗi tài xế vài giây một lần | rơi về đường dự phòng HTTP |
 
-Chính Redis là thứ gỡ bỏ ràng buộc "chỉ chạy được một bản sao": trước khi có nó, sáu loại dữ liệu
-trên nằm trong bộ nhớ tiến trình nên hai pod thấy hai thế giới khác nhau.
+**Redis** gỡ ràng buộc "chỉ chạy được một bản sao": trước khi có nó, sáu loại dữ liệu trên nằm
+trong bộ nhớ tiến trình nên hai pod thấy hai thế giới khác nhau.
+
+**NATS** gỡ ràng buộc "không được giết pod giữa chừng": handler chạy xong mới báo nhận, nên tiến
+trình chết thì việc được giao lại thay vì biến mất cùng goroutine.
+
+**MQTT** là lựa chọn cho bối cảnh VN: máy Android giá rẻ, mạng 4G chập chờn. Header vài byte thay
+vì vài trăm, một kết nối duy nhất thay vì mở lại liên tục, QoS 1 để ping không mất khi sóng chờn,
+và **Last Will** — broker tự báo khi thiết bị mất kết nối, không phải chờ hết 45 giây độ tươi.
 
 ---
 

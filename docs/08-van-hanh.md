@@ -43,8 +43,9 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | **`DATABASE_URL`** | *(rỗng)* | **rỗng ⇒ chạy toàn bộ bằng bộ nhớ.** Có giá trị ⇒ dùng Postgres cho `drivers`+`trips` |
 | **`REDIS_URL`** | *(rỗng)* | Rỗng ⇒ chỉ mục vị trí, khoá giành chuyến, lời mời, báo giá, khoá idempotency và rate limit nằm trong **bộ nhớ tiến trình** ⇒ **chỉ chạy đúng 1 bản sao**. Bắt buộc ở production |
 | `OSRM_URL` | *(rỗng)* | Rỗng ⇒ dùng ước lượng haversine (đường chim bay × 1.35). Sai số đi thẳng vào giá cước |
-| `NATS_URL` | *(rỗng)* | **chưa dùng** — GĐ 3 còn lại |
-| `MQTT_URL` | *(rỗng)* | **chưa dùng** — GĐ 3 còn lại |
+| **`NATS_URL`** | *(rỗng)* | Rỗng ⇒ sự kiện đi qua bus in-process, handler **không có ack**: giết tiến trình giữa chừng sẽ mất việc đang xử lý |
+| **`MQTT_URL`** | *(rỗng)* | Rỗng ⇒ chỉ nhận ping qua HTTP. MQTT tiết kiệm pin và băng thông hơn nhiều trên máy Android giá rẻ, và có Last Will |
+| `MQTT_CLIENT_ID` | `godrive-<host>-<pid>` | **Phải khác nhau giữa các pod** — hai client trùng ID sẽ liên tục đá nhau ra khỏi broker |
 | `JWT_SECRET` | `dev-secret-doi-truoc-khi-len-production` | khoá ký HS256 |
 | `ACCESS_TTL` | `24h` | hạn token |
 | `DEV_AUTH` | `true` | trả mã OTP trong response **và mở `POST /v1/drivers/me/topup`** — chỉ dev |
@@ -132,8 +133,8 @@ bất kỳ dịch vụ nào trong này**.
 |---|---|---|---|
 | `postgres` | `postgis/postgis:16-3.4` | 5432 | ✅ `accounts`, `drivers`, `trips`, `trip_events`, `offers`, `trip_claims`, sổ cái, outbox, nhật ký admin |
 | `redis` | `redis:7-alpine` (AOF) | 6379 | ✅ chỉ mục vị trí, khoá chuyến, lời mời, báo giá, idempotency, rate limit |
-| `nats` | `nats:2.10-alpine` (`-js`) | 4222, 8222 | ❌ chưa |
-| `emqx` | `emqx/emqx:5.6` | 1883, 18083 | ❌ chưa |
+| `nats` | `nats:2.10-alpine` (`-js -m 8222`) | 4222, 8222 | ✅ bus sự kiện có ack; 8222 là cổng giám sát |
+| `emqx` | `emqx/emqx:5.6` | 1883, 18083 | ✅ luồng vị trí; 18083 là bảng điều khiển |
 | `osrm` | `osrm/osrm-backend` | 5000 | ✅ đặt `OSRM_URL` để bật (profile `routing`) |
 
 Chuẩn bị dữ liệu OSRM trước khi bật profile `routing`:
@@ -207,7 +208,8 @@ Căn cứ: **Nghị định 13/2023** (bảo vệ dữ liệu cá nhân) và **N
 
 ## 8.7 Câu SQL kiểm tra sức khoẻ
 
-**9 câu dưới đây đã được chạy thật sau mỗi lần kiểm chứng đầu-cuối và đều sạch.**
+**Toàn bộ các câu dưới đây đã được chạy thật sau mỗi lần kiểm chứng đầu-cuối và đều sạch** —
+kể cả sau khi `SIGKILL` một pod giữa chừng.
 Chạy định kỳ trong CI **và** production:
 
 ```sql
@@ -249,6 +251,11 @@ SELECT count(*) FROM ledger_entries e
 LEFT JOIN ledger_transactions t ON t.tx_id = e.tx_id
 WHERE t.tx_id IS NULL;
 
+-- BẤT BIẾN #7: một chuyến chỉ được ghi sổ MỘT lần, kể cả khi sự kiện bị giao
+-- lại sau khi pod xử lý nó chết. Phải trả 0 dòng.
+SELECT ref_id, count(*) FROM ledger_transactions
+WHERE ref_type = 'TRIP' GROUP BY ref_id HAVING count(*) > 1;
+
 -- BẤT BIẾN #5: mọi bút toán thuộc một giao dịch đã đăng ký. Phải trả 0.
 SELECT count(*) FROM ledger_entries e
 LEFT JOIN ledger_transactions t ON t.tx_id = e.tx_id
@@ -281,7 +288,9 @@ ORDER BY 2;
 - [ ] **`DEV_AUTH=false`** ⇒ `POST /v1/drivers/me/topup` không được đăng ký. Kiểm bằng cách gọi thử: phải trả 404
 - [ ] Role ứng dụng **không có** `UPDATE`/`DELETE` trên `ledger_entries`, `trip_events`, `admin_audit_log` ([T-27](07-todo.md#t-27))
 - [ ] Không còn dòng log `"một số store vẫn ở bộ nhớ dù đã bật Postgres"` lúc khởi động
-- [ ] Cả 9 câu SQL bất biến ở §8.7 trả về kết quả sạch trên dữ liệu staging
+- [ ] Toàn bộ câu SQL bất biến ở §8.7 trả về kết quả sạch trên dữ liệu staging
+- [ ] `NATS_URL` đã đặt — không có nó thì giết pod giữa chừng sẽ mất việc đang xử lý
+- [ ] Mỗi pod có `MQTT_CLIENT_ID` **khác nhau**
 - [x] `go test ./... -race -count=6` xanh ở **cả** in-memory lẫn Postgres ✅
 - [ ] `DEV_AUTH=false` ⇒ endpoint `POST /v1/drivers/me/topup` **không được đăng ký** (kiểm bằng curl, phải trả 404)
 - [ ] Sao lưu Postgres + đã **thử khôi phục thật**, không chỉ cấu hình sao lưu
@@ -311,6 +320,8 @@ ORDER BY 2;
 | Số liệu | Loại | Cảnh báo khi |
 |---|---|---|
 | `godrive_outbox_dead` | gauge | **> 0** — sự kiện nghiệp vụ đã mất. Đây là cảnh báo quan trọng nhất trong cả hệ thống |
+| `num_ack_pending` (từ `/jsz` của NATS) | — | cao kéo dài — có handler treo, việc không được ack |
+| `num_redelivered` (từ `/jsz`) | — | tăng đều — có handler lỗi lặp lại |
 | `godrive_outbox_pending` | gauge | > 100 hoặc tăng đều — relay chết hoặc bus hỏng |
 | `godrive_trip_dispatch_seconds` | histogram | p95 > 30s — khách chờ quá lâu để được ghép |
 | `godrive_trips_searching` | gauge | tăng đều mà `godrive_drivers_idle` không tăng — thiếu cung |

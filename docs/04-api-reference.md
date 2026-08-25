@@ -51,7 +51,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
 | `GET` | `/healthz` | — | liveness: tiến trình còn sống không |
-| `GET` | `/readyz` | — | readiness: **ping thật** Postgres + Redis, trả 503 khi hỏng |
+| `GET` | `/readyz` | — | readiness: **ping thật** Postgres, Redis, NATS, MQTT — trả 503 khi bất kỳ cái nào hỏng |
 | `GET` | `/metrics` | — | số liệu định dạng Prometheus |
 | **Xác thực** ||||
 | `POST` | `/v1/auth/otp` | công khai | `identity.requestOTP` |

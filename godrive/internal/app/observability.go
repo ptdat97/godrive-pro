@@ -124,24 +124,24 @@ func (a *App) registerGauges() {
 // vụ: một lỗi khi đo không được làm hỏng việc thật.
 func (a *App) startMetricsConsumers() {
 	m := a.Metrics
-	a.Bus.Subscribe(eventbus.TopicTripRequested, func(_ context.Context, _ eventbus.Event) error {
+	a.Bus.Subscribe(eventbus.TopicTripRequested, "metrics", func(_ context.Context, _ eventbus.Event) error {
 		m.tripsCreated.Inc(nil)
 		return nil
 	})
-	a.Bus.Subscribe(eventbus.TopicOfferCreated, func(_ context.Context, _ eventbus.Event) error {
+	a.Bus.Subscribe(eventbus.TopicOfferCreated, "metrics", func(_ context.Context, _ eventbus.Event) error {
 		m.offers.Inc(metrics.Labels{"outcome": "created"})
 		return nil
 	})
-	a.Bus.Subscribe(eventbus.TopicOfferAccepted, func(_ context.Context, _ eventbus.Event) error {
+	a.Bus.Subscribe(eventbus.TopicOfferAccepted, "metrics", func(_ context.Context, _ eventbus.Event) error {
 		m.offers.Inc(metrics.Labels{"outcome": "accepted"})
 		return nil
 	})
-	a.Bus.Subscribe(eventbus.TopicTripAssigned, a.observeDispatchLatency)
-	a.Bus.Subscribe(eventbus.TopicTripCompleted, func(_ context.Context, _ eventbus.Event) error {
+	a.Bus.Subscribe(eventbus.TopicTripAssigned, "metrics", a.observeDispatchLatency)
+	a.Bus.Subscribe(eventbus.TopicTripCompleted, "metrics", func(_ context.Context, _ eventbus.Event) error {
 		m.tripsFinished.Inc(metrics.Labels{"status": "completed"})
 		return nil
 	})
-	a.Bus.Subscribe(eventbus.TopicTripCancelled, func(_ context.Context, e eventbus.Event) error {
+	a.Bus.Subscribe(eventbus.TopicTripCancelled, "metrics", func(_ context.Context, e eventbus.Event) error {
 		var p struct {
 			By string `json:"by"`
 		}
@@ -149,7 +149,7 @@ func (a *App) startMetricsConsumers() {
 		m.tripsFinished.Inc(metrics.Labels{"status": "cancelled", "by": p.By})
 		return nil
 	})
-	a.Bus.Subscribe(eventbus.TopicPaymentSettled, func(_ context.Context, _ eventbus.Event) error {
+	a.Bus.Subscribe(eventbus.TopicPaymentSettled, "metrics", func(_ context.Context, _ eventbus.Event) error {
 		m.ledgerPosts.Inc(metrics.Labels{"result": "ok"})
 		return nil
 	})
@@ -211,6 +211,14 @@ func (a *App) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.Redis != nil {
 		add("redis", a.Redis.Ping(ctx))
+	}
+	// Bus tự kiểm tra mình qua Port HealthChecker — /readyz không cần biết nó
+	// đang là bản in-memory hay NATS.
+	if hc, ok := a.Bus.(eventbus.HealthChecker); ok {
+		add("nats", hc.Ping(ctx))
+	}
+	if a.MQTT != nil {
+		add("mqtt", a.MQTT.Ping(ctx))
 	}
 
 	status := http.StatusOK

@@ -113,7 +113,12 @@ SUSPENDED  ◄── (⚠️ KHÔNG có code path nào đặt trạng thái này
 - 🟡 Cờ gian lận gom in-memory, mất khi restart; không có ngưỡng tự động khoá
 - ✅ `RedisIndex` — `GEOADD`/`GEOSEARCH` cho toạ độ + HASH có TTL cho thuộc tính lọc.
   TTL của HASH chính là cơ chế hết hạn: tài xế mất mạng tự rơi khỏi tập ứng viên, không cần job dọn
-- 🔵 MQTT chưa có — hiện chỉ có `POST /v1/locations/ping` (HTTP)
+- ✅ `MQTTConsumer` — `drv/+/loc` QoS 1, `CleanSession=false` để broker giữ ping khi consumer mất
+  kết nối; đăng ký lại **sau mỗi lần nối lại**, không phải một lần lúc khởi động (nối lại mà không
+  đăng ký lại thì kết nối sống nhưng câm). `driverID` lấy từ **topic**, không lấy từ payload — broker
+  kiểm soát được ai publish vào topic nào, còn payload thì thiết bị tự khai
+- ✅ Last Will `drv/+/status` = `offline` → gỡ tài xế khỏi chỉ mục ngay, không chờ hết 45 giây độ tươi
+- 🔵 `POST /v1/locations/ping` giữ làm đường dự phòng
 
 ---
 
@@ -376,7 +381,7 @@ tâm bản đồ mặc định = Chợ Bến Thành `(10.7725, 106.6980)`
 | `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | ✅ mới ở GĐ 0. Mọi `go func()` chạy code nghiệp vụ đều phải mở đầu bằng nó |
 | `platform/httpx` | `JSON`, `Fail`, `Decode` (giới hạn 1MB + `DisallowUnknownFields`), `RequestID`/`Logging`/`Recover`/`RateLimit` | ✅ rate limit nay dọn bucket nguội (`IdleTTL` 10', `SweepEvery` 1') |
 | `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | Mới từ GĐ 0. **Mọi `go func()` chạy code nghiệp vụ phải mở đầu bằng nó** |
-| `platform/eventbus` | `Bus` in-memory, publish bất đồng bộ | ✅ dùng đúng `WaitGroup`; khi đang tắt thì chạy handler **đồng bộ** để không mất sự kiện ([G-34](05-doi-chieu-spec-code.md#g-34)). Vẫn cần NATS để bảo đảm **xử lý xong**, không chỉ **phát đi** |
+| `platform/eventbus` | `Bus`: bản in-memory + **bản NATS JetStream** | ✅ `Subscribe` nhận **tên consumer** — tên là danh tính ở broker. Bản NATS có ack, backoff, `MaxDeliver`, và `Ping` cho `/readyz`. Bản in-memory dùng đúng `WaitGroup`, khi đang tắt chạy handler **đồng bộ** ([G-34](05-doi-chieu-spec-code.md#g-34)) |
 | `platform/logger` | `slog` + `logger.From(ctx)` | |
 | `notification` | `Pusher`, `SMSSender`, `OTPSender` | Chỉ `LogOTPSender` được nối; `LogPusher` **chưa ai dùng** — chờ FCM/APNs ở GĐ 3 ([G-11](05-doi-chieu-spec-code.md#g-11)) |
 | `outbox` | `Store` + `Relay` | **Chưa nối vào bất kỳ luồng nghiệp vụ nào** |

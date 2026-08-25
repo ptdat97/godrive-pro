@@ -1,5 +1,16 @@
 # Hạ tầng phát triển cục bộ.
-# Ứng dụng vẫn chạy được mà KHÔNG cần các dịch vụ này (chế độ in-memory).
+#
+# Ứng dụng chạy được mà không cần dịch vụ nào (chế độ bộ nhớ), nhưng mỗi dịch vụ
+# bật thêm một khả năng:
+#
+#   postgres  DATABASE_URL  dữ liệu bền (tiền, chuyến, nhật ký)
+#   redis     REDIS_URL     nhiều bản sao (vị trí, khoá chuyến, báo giá, rate limit)
+#   nats      NATS_URL      ack cho consumer — giết pod giữa chừng không mất việc
+#   emqx      MQTT_URL      luồng vị trí tiết kiệm pin + Last Will
+#   osrm      OSRM_URL      quãng đường thật thay cho ước lượng đường chim bay
+#
+# Bật hết:
+#   docker compose -f deploy/docker-compose.yml up -d postgres redis nats emqx
 services:
   postgres:
     image: postgis/postgis:16-3.4
@@ -21,8 +32,11 @@ services:
 
   nats:
     image: nats:2.10-alpine
-    command: ["-js"]          # bật JetStream để có at-least-once
+    # -js bật JetStream (bền + ack), -m mở cổng giám sát để xem consumer tồn đọng:
+    #   curl -s localhost:8222/jsz?consumers=1\&streams=1
+    command: ["-js", "-m", "8222"]
     ports: ["4222:4222", "8222:8222"]
+    volumes: ["natsdata:/data"]
 
   emqx:
     image: emqx/emqx:5.6
@@ -42,3 +56,4 @@ services:
 
 volumes:
   pgdata:
+  natsdata:

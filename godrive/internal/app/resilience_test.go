@@ -103,10 +103,10 @@ func TestEventHandlerPanicIsContained(t *testing.T) {
 	a := newTestApp(t)
 
 	done := make(chan struct{})
-	a.Bus.Subscribe("test.panic", func(context.Context, eventbus.Event) error {
+	a.Bus.Subscribe("test.panic", "test", func(context.Context, eventbus.Event) error {
 		panic("consumer hỏng")
 	})
-	a.Bus.Subscribe("test.panic", func(context.Context, eventbus.Event) error {
+	a.Bus.Subscribe("test.panic", "test", func(context.Context, eventbus.Event) error {
 		close(done)
 		return nil
 	})

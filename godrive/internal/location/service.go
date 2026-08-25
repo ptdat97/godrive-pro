@@ -90,6 +90,12 @@ func (s *Service) Nearby(ctx context.Context, c geo.Point, radiusM float64, f Fi
 	return s.idx.Nearby(ctx, c, radiusM, f)
 }
 
+// Remove gỡ tài xế khỏi chỉ mục. Dùng khi thiết bị mất kết nối (Last Will của
+// MQTT) hoặc tài xế tắt nhận chuyến.
+func (s *Service) Remove(ctx context.Context, driverID string) error {
+	return s.idx.Remove(ctx, driverID)
+}
+
 func (s *Service) Get(ctx context.Context, driverID string) (Snapshot, bool, error) {
 	return s.idx.Get(ctx, driverID)
 }

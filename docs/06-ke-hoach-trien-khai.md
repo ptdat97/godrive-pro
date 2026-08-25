@@ -125,7 +125,7 @@ mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủ
 
 ---
 
-## Giai đoạn 3 — Hạ tầng thật · 🟡 **MỘT PHẦN** (2026-08-25)
+## Giai đoạn 3 — Hạ tầng thật · ✅ **XONG PHẦN HẠ TẦNG** (2026-08-25)
 
 **Mục tiêu:** chạy nhiều pod. Đây là chỗ *"đổi implementation, không sửa nghiệp vụ"* của spec §8 nhóm B.
 
@@ -139,16 +139,32 @@ mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủ
 | `pricing.HaversineEngine` | `pricing.OSRMEngine` — `/route`, có đường lùi haversine | ✅ **xong** |
 | `matching.SimpleETA` | `matching.OSRMETA` — `/table`, **một request cho cả lô**, cache theo cặp ô lưới | ✅ **xong** |
 | — | `/metrics` (Prometheus) + `/readyz` kiểm thật DB + Redis | ✅ **xong** |
+| `eventbus.NewInMemory` | **NATS JetStream** — `AckExplicit` + durable consumer có tên | ✅ **xong** |
+| — | **MQTT (EMQX)** — `drv/+/loc` QoS 1 + Last Will `drv/+/status` | ✅ **xong** |
 | `pkg/geo` lưới ô vuông | `github.com/uber/h3-go/v4` res 8–9 | ⬜ **chưa** — Redis GEO đã lo phần chỉ mục không gian; lưới ô nay chỉ còn dùng cho ô đếm cầu của surge và khoá cache ETA, nên giá trị đổi sang H3 giảm hẳn |
-| `eventbus.NewInMemory` | **NATS JetStream** | ⬜ **chưa** — không có broker để chạy thử |
-| `notification.LogPusher` | FCM + APNs; `LogOTPSender` → **Zalo ZNS** | ⬜ **chưa** — cần credential thật |
-| — | **MQTT (EMQX)** cho luồng vị trí | ⬜ **chưa** — không có broker để chạy thử |
+| `notification.LogPusher` | FCM + APNs; `LogOTPSender` → **Zalo ZNS** | ⬜ **chưa** — cần credential thật của Google/Apple/Zalo |
+| — | Tracing OpenTelemetry | ⬜ **chưa** |
 
-> **Vì sao dừng ở đây thay vì viết nốt.** Bốn hạng mục còn lại không chạy thử được trên máy phát
-> triển này (không Docker, không broker, không credential). Ba giai đoạn trước cho thấy **7 lỗi
-> nghiêm trọng nhất đều chỉ lộ ra khi chạy thật** — bốn trong số đó là cuộc đua hoặc lỗi thứ tự
-> mà đọc code không thấy được. Giao một client NATS chưa từng nối vào broker nào là giao một thứ
-> chưa biết có chạy không.
+### Điều NATS thật sự mang lại
+
+Không phải "chạy được nhiều tiến trình" — outbox đã lo phần đó từ GĐ 2. Khác biệt là **ack**:
+
+| | Bus in-process | NATS JetStream |
+|---|---|---|
+| Handler lỗi | ghi log rồi **bỏ qua** | **giao lại** với backoff tăng dần |
+| Handler panic | bắt lại rồi **bỏ qua** | **giao lại** |
+| Tiến trình chết giữa chừng | việc **biến mất** cùng goroutine | giao lại cho pod khác sau `AckWait` |
+| Nhiều pod cùng nghe | **mọi pod** chạy handler | cùng tên ⇒ **đúng một pod** xử lý |
+| Publish trước khi có consumer | sự kiện **mất** | consumer vào sau vẫn nhận đủ |
+
+`Subscribe` nay nhận thêm **tên consumer**. Đây là thay đổi bắt buộc chứ không phải trang trí: với
+broker thật, tên là *danh tính* của consumer — vị trí đã đọc tới đâu lưu theo tên đó. Đổi tên nghĩa
+là tạo consumer mới và đọc lại từ đầu.
+
+> **Hệ quả phải nhớ:** `ack` có thể thất bại **sau khi việc đã xong** (mạng đứt giữa lúc báo nhận).
+> Khi đó NATS giao lại một việc đã làm rồi. Vì vậy **mọi handler đều phải idempotent** — điều này
+> vốn đã đúng từ GĐ 1 nhờ `TxID` suy ra tất định, và giờ nó trở thành yêu cầu bắt buộc chứ không
+> còn là lựa chọn tốt.
 
 **Đồng thời:** metric Prometheus, tracing OpenTelemetry, `/readyz` kiểm tra DB + Redis ([G-25](05-doi-chieu-spec-code.md#g-25)).
 
@@ -163,8 +179,10 @@ mà nhận tiền thật của khách là rủi ro pháp lý, không phải rủ
 - [x] Rate limit dùng **chung hạn mức** giữa các pod, không phải mỗi pod một hạn mức
 - [x] `/readyz` trả 503 khi phụ thuộc chết; `/metrics` phát số liệu Prometheus
 - [x] Chi phí Maps: **một request OSRM cho cả lô** + cache theo cặp ô lưới — có test đếm số request
-- [ ] Ứng dụng tài xế nhận offer qua **push**, không cần poll — *chưa (cần FCM)*
-- [ ] Giết 1 pod giữa chừng không mất chuyến nào — *cần NATS để consumer có ack*
+- [x] **Giết 1 pod giữa chừng không mất chuyến nào** — `SIGKILL` pod A ngay sau khi hoàn tất chuyến, pod B ghi sổ thay và **không ghi trùng**
+- [x] Vị trí đi qua **MQTT** thay vì HTTP; Last Will gỡ tài xế mất kết nối khỏi chỉ mục ngay
+- [x] `/readyz` kiểm thật **cả bốn** phụ thuộc: Postgres, Redis, NATS, MQTT
+- [ ] Ứng dụng tài xế nhận offer qua **push**, không cần poll — *chưa (cần credential FCM)*
 - [ ] Load test riêng `matching`
 
 ---

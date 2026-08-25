@@ -20,8 +20,15 @@ type Config struct {
 	// RedisURL rỗng => chỉ mục vị trí, báo giá, khoá idempotency và rate limit
 	// nằm trong bộ nhớ tiến trình, tức là CHỈ chạy đúng với một bản sao.
 	RedisURL string
-	NATSURL  string
-	MQTTURL  string
+	// NATSURL rỗng => sự kiện đi qua bus in-process, handler KHÔNG có ack:
+	// giết tiến trình giữa chừng sẽ mất việc đang xử lý.
+	NATSURL string
+	// MQTTURL rỗng => chỉ nhận ping qua HTTP. MQTT tiết kiệm pin và băng thông
+	// hơn nhiều trên máy Android giá rẻ, và có Last Will để phát hiện mất kết nối.
+	MQTTURL string
+	// MQTTClientID phải KHÁC NHAU giữa các pod — hai client trùng ID sẽ liên
+	// tục đá nhau ra khỏi broker.
+	MQTTClientID string
 	// OSRMURL rỗng => dùng ước lượng haversine (đường chim bay × hệ số uốn khúc).
 	// Sai số của ước lượng đó đi thẳng vào giá cước khách trả.
 	OSRMURL string
@@ -50,6 +57,7 @@ func Load() (Config, error) {
 		RedisURL:      get("REDIS_URL", ""),
 		NATSURL:       get("NATS_URL", ""),
 		MQTTURL:       get("MQTT_URL", ""),
+		MQTTClientID:  get("MQTT_CLIENT_ID", "godrive-"+hostSuffix()),
 		OSRMURL:       get("OSRM_URL", ""),
 		JWTSecret:     get("JWT_SECRET", "dev-secret-doi-truoc-khi-len-production"),
 		AccessTTL:     getDur("ACCESS_TTL", 24*time.Hour),
@@ -79,6 +87,16 @@ func Load() (Config, error) {
 }
 
 func (c Config) InMemory() bool { return c.DatabaseURL == "" }
+
+// hostSuffix dựng phần đuôi client ID từ tên máy + PID, để hai tiến trình trên
+// cùng một máy cũng không trùng ID.
+func hostSuffix() string {
+	h, err := os.Hostname()
+	if err != nil {
+		h = "unknown"
+	}
+	return h + "-" + strconv.Itoa(os.Getpid())
+}
 
 // getList đọc danh sách phân tách bằng dấu phẩy, bỏ khoảng trắng và phần tử rỗng.
 func getList(k string) []string {

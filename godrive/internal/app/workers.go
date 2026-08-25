@@ -19,24 +19,24 @@ import (
 // Ở production, mỗi consumer chạy trong tiến trình riêng và đọc từ NATS/Kafka
 // với consumer group để scale ngang.
 func (a *App) StartWorkers(ctx context.Context) {
-	a.Bus.Subscribe(eventbus.TopicTripRequested, a.onTripRequested(ctx))
+	a.Bus.Subscribe(eventbus.TopicTripRequested, "dispatcher", a.onTripRequested(ctx))
 	// Đo CẦU cho surge. Trước đây DemandSurge.RecordRequest không có ai gọi,
 	// nên demand vĩnh viễn bằng 0 và hệ số luôn là 1.0.
-	a.Bus.Subscribe(eventbus.TopicTripRequested, a.onTripRequestedSurge)
-	a.Bus.Subscribe(eventbus.TopicTripCompleted, a.onTripCompleted)
+	a.Bus.Subscribe(eventbus.TopicTripRequested, "surge-demand", a.onTripRequestedSurge)
+	a.Bus.Subscribe(eventbus.TopicTripCompleted, "settlement", a.onTripCompleted)
 	// Đồng bộ trạng thái tài xế theo vòng đời chuyến.
-	a.Bus.Subscribe(eventbus.TopicTripAssigned, a.syncDriverStatus)
-	a.Bus.Subscribe(eventbus.TopicTripStarted, a.syncDriverStatus)
-	a.Bus.Subscribe(eventbus.TopicTripCancelled, a.onTripCancelled)
+	a.Bus.Subscribe(eventbus.TopicTripAssigned, "driver-status", a.syncDriverStatus)
+	a.Bus.Subscribe(eventbus.TopicTripStarted, "driver-status", a.syncDriverStatus)
+	a.Bus.Subscribe(eventbus.TopicTripCancelled, "cancellation", a.onTripCancelled)
 	// Đồng bộ cột cache drivers.wallet_balance từ sổ cái.
-	a.Bus.Subscribe(eventbus.TopicWalletBalanceChanged, a.onWalletBalanceChanged)
+	a.Bus.Subscribe(eventbus.TopicWalletBalanceChanged, "wallet-cache", a.onWalletBalanceChanged)
 
 	// Thống kê tài xế — đầu vào của hàm chấm điểm. Không có những consumer này
 	// thì rating/acceptance/cancel đóng băng ở tiền nghiệm và ba trong năm thành
 	// phần chấm điểm trở thành hằng số.
-	a.Bus.Subscribe(eventbus.TopicOfferCreated, a.onOfferStat(driver.StatsDelta{OffersReceived: 1}))
-	a.Bus.Subscribe(eventbus.TopicOfferAccepted, a.onOfferStat(driver.StatsDelta{OffersAccepted: 1}))
-	a.Bus.Subscribe(eventbus.TopicTripRated, a.onTripRated)
+	a.Bus.Subscribe(eventbus.TopicOfferCreated, "driver-stats", a.onOfferStat(driver.StatsDelta{OffersReceived: 1}))
+	a.Bus.Subscribe(eventbus.TopicOfferAccepted, "driver-stats", a.onOfferStat(driver.StatsDelta{OffersAccepted: 1}))
+	a.Bus.Subscribe(eventbus.TopicTripRated, "driver-stats", a.onTripRated)
 
 	a.startMetricsConsumers()
 

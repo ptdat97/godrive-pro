@@ -54,6 +54,9 @@ type App struct {
 	// bộ nhớ tiến trình và hệ thống chỉ đúng với một bản sao.
 	Redis   *redisx.Client
 	Metrics *appMetrics
+	// MQTT khác nil khi có MQTT_URL. Luồng vị trí chính đi qua đây; endpoint
+	// HTTP /v1/locations/ping vẫn giữ làm đường dự phòng.
+	MQTT *location.MQTTConsumer
 
 	adminAuth *admin.Auth
 	db        *sql.DB
@@ -70,7 +73,25 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 // Đồng hồ tiêm được là điều kiện để test những mốc thời gian nghiệp vụ mà không
 // phải ngủ thật: cửa sổ huỷ miễn phí 2 phút, hạn báo giá 5 phút, độ tươi ping 45 giây.
 func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, error) {
-	bus := eventbus.NewInMemory(log)
+	// Bus: NATS JetStream nếu có, ngược lại in-memory.
+	//
+	// Khác biệt thật sự không phải "chạy được nhiều tiến trình" — outbox đã lo
+	// phần đó. Khác biệt là ACK: handler chạy xong mới báo nhận, nên tiến trình
+	// chết giữa chừng thì việc được giao lại thay vì biến mất.
+	var bus eventbus.Bus
+	if cfg.NATSURL != "" {
+		b, err := eventbus.NewNATS(cfg.NATSURL, log)
+		if err != nil {
+			return nil, err
+		}
+		bus = b
+	} else {
+		bus = eventbus.NewInMemory(log)
+		if !cfg.InMemory() {
+			log.Warn("chưa cấu hình NATS_URL: sự kiện đi qua bus in-process, " +
+				"handler KHÔNG có ack — giết tiến trình giữa chừng sẽ mất việc đang xử lý")
+		}
+	}
 
 	var rdb *redisx.Client
 	if cfg.RedisURL != "" {
@@ -211,11 +232,27 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		Redis: rdb, Metrics: newAppMetrics(),
 		db: db,
 	}
+	// MQTT cho luồng vị trí. Dựng SAU khi App đã sẵn sàng vì consumer bắt đầu
+	// nhận ping ngay khi nối, và nó cần locSvc hoạt động được.
+	if cfg.MQTTURL != "" {
+		mc, err := location.NewMQTTConsumer(cfg.MQTTURL, cfg.MQTTClientID, locSvc, log)
+		if err != nil {
+			return nil, err
+		}
+		app.MQTT = mc
+	}
+
 	app.registerGauges()
 	return app, nil
 }
 
 func (a *App) Close() error {
+	// Thứ tự có ý nghĩa: ngừng nhận ping mới trước, rồi mới đóng bus (bus tự
+	// chờ handler đang chạy xong), cuối cùng mới cắt Redis và Postgres — handler
+	// đang chạy dở vẫn cần chúng.
+	if a.MQTT != nil {
+		a.MQTT.Close()
+	}
 	a.Bus.Close()
 	if a.Redis != nil {
 		_ = a.Redis.Close()
