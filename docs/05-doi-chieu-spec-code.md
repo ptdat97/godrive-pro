@@ -242,6 +242,34 @@ nhưng hậu quả thì y hệt, và càng khó phát hiện vì hiếm.
    `trip.ActiveByDriver`, phương thức đã cài đặt từ đầu mà chưa ai gọi ([G-24](#)).
    Không có lối này, cách duy nhất để họ làm việc lại là gọi tổng đài nhờ sửa tay trong CSDL.
 
+<a id="g-35"></a>
+### G-35 · ✅ Mọi thông số vận hành là hằng số biên dịch cứng
+
+Spec §7 liệt kê một loạt con số *"KHÔNG được tự quyết định"* — biểu giá, trọng số ghép chuyến, bậc
+thang surge, hạn mức công nợ, thuế khấu trừ. Code phản ánh đúng tinh thần đó bằng cách để chúng
+thành hằng số trong `internal/pricing`, `internal/matching`, `internal/wallet`.
+
+Nhưng "không được tự quyết định" nói về **ai có quyền chốt con số**, không phải về **cách con số đi
+vào hệ thống**. Đóng chúng thành hằng số làm cả hai việc cùng lúc, và việc thứ hai gây hại: khi
+người có thẩm quyền cuối cùng cũng chốt được biểu giá, việc áp dụng nó vẫn cần một lập trình viên
+sửa code, một lần build, một lần triển khai. Trên thực tế nghĩa là các con số đó **không bao giờ
+được đổi** — hệ thống chạy mãi bằng giá trị mà ai đó đặt tạm lúc viết code.
+
+**Sửa:** đưa 50 ô vào bảng `settings`, sửa từ giao diện quản trị, kèm ba lớp bảo vệ — ngưỡng an toàn
+cứng trong code, khoá lạc quan theo `version`, bắt buộc ghi lý do ở tầng API. Xem
+[T-29](07-todo.md#t-29) và [08 §8.11](08-van-hanh.md).
+
+Điều quan trọng là **ngưỡng an toàn vẫn nằm trong code và không sửa được từ giao diện**. Đó mới là
+chỗ tinh thần của spec §7 thật sự thuộc về: vận hành đổi được biểu giá, nhưng không ai — kể cả
+admin — đẩy được chiết khấu lên 60% hay thuế lên 50%. Câu hỏi mỗi ngưỡng trả lời là *"giá trị nào,
+nếu gõ nhầm, sẽ gây thiệt hại không sửa được bằng cách sửa lại cấu hình?"*
+
+> **Ba lỗi phát sinh trong lúc làm, cả ba đều là lỗi âm thầm** — hệ thống vẫn chạy, không có báo
+> động nào kêu, chỉ có tiền chảy sai chỗ. Chúng được ghi lại đầy đủ ở [T-29](07-todo.md#t-29) vì
+> chúng cùng một họ với 8 lỗi nghiêm trọng khác của dự án: **không lỗi nào lộ ra khi đọc code.**
+
+---
+
 <a id="g-34"></a>
 ### G-34 · ✅ Dùng sai `sync.WaitGroup` trong event bus — tắt êm có thể mất sự kiện
 
@@ -374,3 +402,22 @@ quét cả dải giá trị thì mới tìm ra 422 tổ hợp lệch.
 12. **`UpdateWalletBalance` và `ApplyStats` cố ý KHÔNG tăng `version`.** `version` bảo vệ chuyển
     trạng thái; số dư và thống kê là giá trị suy ra. Nếu chúng cũng tăng `version` thì việc đồng bộ
     cache sẽ làm hỏng CAS của `Reserve` đang chạy song song.
+
+**Bổ sung khi làm cấu hình động (GĐ 4):**
+
+13. **Lược đồ biểu mẫu do backend phát ra.** Nhãn, đơn vị và ngưỡng hợp lệ là kiến thức nghiệp vụ và
+    đã sống cạnh hàm `Validate`; để giao diện chép lại là bảo đảm hai bản sẽ trôi khỏi nhau. Hai test
+    chốt cả hai chiều: không ô nào trên giao diện trỏ vào trường không tồn tại, và không trường nào
+    sửa được mà lại vắng mặt trên giao diện.
+
+14. **`Current()` không bao giờ trả lỗi.** Cấu hình nằm trên đường đi của *mọi* báo giá và *mọi* vòng
+    dispatch. CSDL lỗi thì dùng ảnh chụp cũ (hoặc mặc định) và chạy tiếp — dừng phục vụ vì không đọc
+    được cấu hình là biến một sự cố nhỏ thành sự cố lớn. Cùng lý do: một nhóm có giá trị hỏng thì lùi
+    về mặc định, các nhóm khác vẫn nạp bình thường.
+
+15. **`Reload` dựng lại từ mặc định, không gộp lên ảnh chụp cũ.** Nếu gộp thì một nhóm bị xoá khỏi
+    CSDL vẫn sống mãi trong bộ nhớ — cấu hình "đang chạy" khác cấu hình lưu trữ mà không ai biết.
+
+16. **Cấu hình trả về là bản sao sâu.** `Snapshot` trả theo giá trị, nhưng map và slice bên trong vẫn
+    trỏ chung; không nhân bản thì bất kỳ ai cầm ảnh chụp cũng ghi ngược được vào cấu hình sống của cả
+    hệ thống.

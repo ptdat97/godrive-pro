@@ -2,11 +2,7 @@
 // Đây chỉ là mô tả hình dạng dữ liệu — mọi logic nghiệp vụ nằm ở godrive.
 
 export type DriverStatus =
-  | "OFFLINE"
-  | "IDLE"
-  | "ASSIGNED"
-  | "ON_TRIP"
-  | "SUSPENDED";
+  "OFFLINE" | "IDLE" | "ASSIGNED" | "ON_TRIP" | "SUSPENDED";
 
 export type KYCState = "PENDING" | "APPROVED" | "REJECTED";
 
@@ -162,4 +158,67 @@ export interface ApiError {
   code: string;
   message: string;
   trace_id?: string;
+}
+
+// ==== Cấu hình vận hành ====
+
+/** Kiểu ô nhập, do backend quyết định (internal/settings/schema.go). */
+export type SettingKind =
+  | "vnd"
+  | "permille"
+  | "int"
+  | "float"
+  | "bool"
+  | "hour"
+  | "seconds"
+  | "meters"
+  | "surge_steps";
+
+export interface SettingField {
+  /** Đường dẫn dấu chấm vào JSON của nhóm, ví dụ "tariffs.BIKE.per_km". */
+  path: string;
+  label: string;
+  kind: SettingKind;
+  min?: number;
+  max?: number;
+  hint?: string;
+}
+
+export interface SettingSection {
+  title: string;
+  note?: string;
+  fields: SettingField[];
+}
+
+/**
+ * Một nhóm cấu hình kèm lược đồ biểu mẫu.
+ *
+ * Nhãn, đơn vị và ngưỡng đều do backend phát ra — giao diện không tự chép lại,
+ * nếu không hai bên sẽ trôi khỏi nhau.
+ */
+export interface SettingGroup {
+  key: string;
+  label: string;
+  description: string;
+  /** Cảnh báo hệ quả pháp lý hoặc tài chính. Hiện nổi bật trước khi lưu. */
+  warning?: string;
+  sections: SettingSection[];
+  value: Record<string, unknown>;
+  version: number;
+  updated_by?: string;
+  updated_at?: string;
+  /** true nghĩa là chưa từng lưu, đang chạy bằng giá trị mặc định trong code. */
+  is_default: boolean;
+}
+
+export interface SettingHistoryEntry {
+  id: string;
+  key: string;
+  version: number;
+  /** Vắng ở lần ghi đầu tiên: trước đó nhóm chạy bằng mặc định trong code. */
+  old_value?: Record<string, unknown>;
+  new_value: Record<string, unknown>;
+  changed_by: string;
+  reason?: string;
+  at: string;
 }

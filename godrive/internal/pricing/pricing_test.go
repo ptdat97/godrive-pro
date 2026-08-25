@@ -99,7 +99,7 @@ func TestNightSurchargeBoundaries(t *testing.T) {
 	}
 	for _, c := range cases {
 		at := vnTime(c.h, c.m)
-		if got := isNight(at); got != c.night {
+		if got := isNight(at, 22, 5); got != c.night {
 			t.Fatalf("%02d:%02d giờ VN: isNight=%v, muốn %v", c.h, c.m, got, c.night)
 		}
 
@@ -123,11 +123,11 @@ func TestNightSurchargeBoundaries(t *testing.T) {
 // isNight phải tính theo giờ VN chứ không theo giờ máy chủ.
 func TestNightUsesVietnamTimeNotServerTime(t *testing.T) {
 	// 16:00 UTC = 23:00 giờ VN -> là ban đêm, dù giờ UTC thì không phải.
-	if !isNight(time.Date(2026, 8, 24, 16, 0, 0, 0, time.UTC)) {
+	if !isNight(time.Date(2026, 8, 24, 16, 0, 0, 0, time.UTC), 22, 5) {
 		t.Fatal("16:00 UTC là 23:00 giờ VN, phải tính là ban đêm")
 	}
 	// 20:00 giờ VN = 13:00 UTC -> chưa phải ban đêm.
-	if isNight(time.Date(2026, 8, 24, 13, 0, 0, 0, time.UTC)) {
+	if isNight(time.Date(2026, 8, 24, 13, 0, 0, 0, time.UTC), 22, 5) {
 		t.Fatal("13:00 UTC là 20:00 giờ VN, chưa phải ban đêm")
 	}
 }

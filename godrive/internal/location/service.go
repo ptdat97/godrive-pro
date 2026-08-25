@@ -21,11 +21,40 @@ type DriverPort interface {
 	Get(ctx context.Context, id string) (*driver.Driver, error)
 }
 
+// Thresholds là các ngưỡng lọc ping, chỉnh được ở bảng điều khiển.
+type Thresholds struct {
+	StaleAfter           time.Duration
+	MaxPlausibleSpeedMps float64
+	MaxAccuracyM         float64
+}
+
+// ThresholdProvider trả ngưỡng hiện hành.
+type ThresholdProvider func(ctx context.Context) Thresholds
+
 type Service struct {
 	idx     Index
 	drivers DriverPort
 	clk     clock.Clock
 	fraud   *FraudDetector
+	thr     ThresholdProvider
+}
+
+// UseThresholds nối nguồn ngưỡng động.
+func (s *Service) UseThresholds(p ThresholdProvider) { s.thr = p }
+
+func (s *Service) thresholds(ctx context.Context) Thresholds {
+	if s.thr != nil {
+		return s.thr(ctx)
+	}
+	return Thresholds{
+		StaleAfter: StaleAfter, MaxPlausibleSpeedMps: MaxPlausibleSpeedMps,
+		MaxAccuracyM: MaxAccuracyM,
+	}
+}
+
+// StaleAfterNow là ngưỡng độ tươi hiện hành — dispatcher và bản đồ dùng chung.
+func (s *Service) StaleAfterNow(ctx context.Context) time.Duration {
+	return s.thresholds(ctx).StaleAfter
 }
 
 func NewService(idx Index, drivers DriverPort, clk clock.Clock) *Service {
@@ -41,14 +70,15 @@ func (s *Service) Ingest(ctx context.Context, p Ping) error {
 		s.fraud.Flag(p.DriverID, ReasonMockLocation)
 		return errs.E(errs.KindForbidden, "mock_location", "Phát hiện ứng dụng giả lập vị trí.")
 	}
-	if p.AccuracyM > MaxAccuracyM {
+	thr := s.thresholds(ctx)
+	if p.AccuracyM > thr.MaxAccuracyM {
 		return errs.Invalid("low_accuracy", "Tín hiệu GPS quá yếu.")
 	}
 	// Tốc độ TỰ KHAI vượt ngưỡng: gắn cờ nhưng vẫn nhận ping.
 	// Khác với TELEPORT (suy ra từ hai vị trí liên tiếp — bằng chứng chắc chắn),
 	// đây chỉ là một trường do thiết bị gửi lên và cảm biến tốc độ GPS hay nhiễu.
 	// Từ chối ping vì một trường phụ sẽ đá nhầm tài xế thật ra khỏi chỉ mục.
-	if p.SpeedMps > MaxPlausibleSpeedMps {
+	if p.SpeedMps > thr.MaxPlausibleSpeedMps {
 		s.fraud.Flag(p.DriverID, ReasonSpeedOutlier)
 	}
 	if p.At.IsZero() {
@@ -57,7 +87,7 @@ func (s *Service) Ingest(ctx context.Context, p Ping) error {
 
 	if prev, ok, _ := s.idx.Get(ctx, p.DriverID); ok {
 		if dt := p.At.Sub(prev.UpdatedAt).Seconds(); dt > 0.5 {
-			if geo.DistanceM(prev.Point, p.Point)/dt > MaxPlausibleSpeedMps {
+			if geo.DistanceM(prev.Point, p.Point)/dt > thr.MaxPlausibleSpeedMps {
 				s.fraud.Flag(p.DriverID, ReasonTeleport)
 				return errs.Invalid("implausible_jump", "Vị trí thay đổi bất thường.")
 			}
@@ -85,7 +115,7 @@ func (s *Service) Ingest(ctx context.Context, p Ping) error {
 
 func (s *Service) Nearby(ctx context.Context, c geo.Point, radiusM float64, f Filter) ([]Snapshot, error) {
 	if f.FreshWithin == 0 {
-		f.FreshWithin = StaleAfter
+		f.FreshWithin = s.thresholds(ctx).StaleAfter
 	}
 	return s.idx.Nearby(ctx, c, radiusM, f)
 }

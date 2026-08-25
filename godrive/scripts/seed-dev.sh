@@ -33,8 +33,13 @@ login() {
 }
 
 # seed_driver PHONE NAME PLATE LAT LNG APPROVE
+#
+# Số CCCD và GPLX suy ra từ số điện thoại: mỗi tài xế phải có giấy tờ RIÊNG.
+# Từ migration 0008, drivers.national_id_idx (chỉ mục mù) là duy nhất — hai hồ
+# sơ dùng chung một số CCCD sẽ bị chặn, đúng như ngoài đời.
 seed_driver() {
   local phone="$1" name="$2" plate="$3" lat="$4" lng="$5" approve="$6"
+  local nid="079${phone:1}" gplx="B2-${phone:1}"
   local tok drv_id
   tok=$(login "$phone" driver)
 
@@ -42,8 +47,8 @@ seed_driver() {
     -H 'Content-Type: application/json' -d @- <<JSON | jqf '["id"]'
 {"full_name":"$name","phone":"$phone","city":"HCM",
  "vehicle":{"type":"BIKE","plate":"$plate","model":"Wave Alpha","color":"Đỏ"},
- "documents":{"national_id":"079090001234","driver_license":"790123456789",
-              "vehicle_reg_no":"VN-1234","insurance_no":"BH-2026",
+ "documents":{"national_id":"$nid","driver_license":"$gplx",
+              "vehicle_reg_no":"VN-${phone:6}","insurance_no":"BH-2026-${phone:6}",
               "insurance_until":"2027-12-31"}}
 JSON
 )

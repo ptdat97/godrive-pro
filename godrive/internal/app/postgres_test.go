@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,8 +27,30 @@ import (
 // DATABASE_URL: các test này XOÁ SẠCH bảng trước khi chạy, nên không bao giờ
 // được phép trỏ nhầm vào cơ sở dữ liệu thật.
 //
-//	TEST_DATABASE_URL="postgres://postgres@localhost:5432/godrive?sslmode=disable" go test ./internal/app/
+//	TEST_DATABASE_URL="postgres://postgres@localhost:5432/godrive_test?sslmode=disable" go test ./internal/app/
 const testDBEnv = "TEST_DATABASE_URL"
+
+// requireTestDatabase từ chối chạy nếu DSN không trỏ vào một CSDL có chữ "test"
+// trong tên.
+//
+// Biến môi trường riêng thôi thì chưa đủ: chỉ cần dán nhầm một chuỗi kết nối là
+// bộ test lặng lẽ TRUNCATE sạch cơ sở dữ liệu đó. Trước đây mặc định của Makefile
+// trỏ thẳng vào CSDL dev, và từ khi cấu hình vận hành nằm trong bảng settings thì
+// mất nó là mất luôn biểu giá cùng toàn bộ lịch sử thay đổi.
+func requireTestDatabase(t *testing.T, dsn string) {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("%s không phải chuỗi kết nối hợp lệ: %v", testDBEnv, err)
+	}
+	name := strings.TrimPrefix(u.Path, "/")
+	if !strings.Contains(strings.ToLower(name), "test") {
+		t.Fatalf("từ chối chạy: %s trỏ vào CSDL %q.\n"+
+			"Test này XOÁ SẠCH mọi bảng, nên tên CSDL bắt buộc phải chứa \"test\" "+
+			"(ví dụ godrive_test). Tạo bằng: createdb godrive_test && "+
+			"migrate -path migrations -database \"...godrive_test...\" up", testDBEnv, name)
+	}
+}
 
 // appTables theo thứ tự xoá an toàn (con trước, cha sau).
 var appTables = []string{
@@ -34,12 +58,17 @@ var appTables = []string{
 	"otp_challenges", "accounts", "ledger_entries", "ledger_transactions",
 	"idempotency_keys", "outbox", "admin_audit_log", "trip_claims",
 	"payment_transactions", "settlement_items", "settlement_batches",
+	// Cấu hình cũng phải dọn: sót lại một biểu giá từ lần chạy trước là mọi
+	// khẳng định về tiền trong bộ test này đều tính theo con số của người khác.
+	"settings_history", "settings",
 }
 
 // mustDB mở một kết nối phụ tới CSDL test.
 func mustDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("pgx", os.Getenv(testDBEnv))
+	dsn := os.Getenv(testDBEnv)
+	requireTestDatabase(t, dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +82,7 @@ func newPostgresApp(t *testing.T) (*App, *sql.DB) {
 	if dsn == "" {
 		t.Skipf("bỏ qua: đặt %s để chạy test tích hợp Postgres", testDBEnv)
 	}
+	requireTestDatabase(t, dsn)
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {

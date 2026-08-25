@@ -381,8 +381,49 @@ tâm bản đồ mặc định = Chợ Bến Thành `(10.7725, 106.6980)`
 | `pkg/crypt` | AES-256-GCM cho dữ liệu cá nhân + chỉ mục mù HMAC | Nonce ngẫu nhiên mỗi lần; giải mã thất bại **báo lỗi**, không trả rỗng |
 | `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | ✅ mới ở GĐ 0. Mọi `go func()` chạy code nghiệp vụ đều phải mở đầu bằng nó |
 | `platform/httpx` | `JSON`, `Fail`, `Decode` (giới hạn 1MB + `DisallowUnknownFields`), `RequestID`/`Logging`/`Recover`/`RateLimit` | ✅ rate limit nay dọn bucket nguội (`IdleTTL` 10', `SweepEvery` 1') |
-| `platform/safego` | `Recover(log, name, cleanup)` cho goroutine nền | Mới từ GĐ 0. **Mọi `go func()` chạy code nghiệp vụ phải mở đầu bằng nó** |
 | `platform/eventbus` | `Bus`: bản in-memory + **bản NATS JetStream** | ✅ `Subscribe` nhận **tên consumer** — tên là danh tính ở broker. Bản NATS có ack, backoff, `MaxDeliver`, và `Ping` cho `/readyz`. Bản in-memory dùng đúng `WaitGroup`, khi đang tắt chạy handler **đồng bộ** ([G-34](05-doi-chieu-spec-code.md#g-34)) |
 | `platform/logger` | `slog` + `logger.From(ctx)` | |
 | `notification` | `Pusher`, `SMSSender`, `OTPSender` | Chỉ `LogOTPSender` được nối; `LogPusher` **chưa ai dùng** — chờ FCM/APNs ở GĐ 3 ([G-11](05-doi-chieu-spec-code.md#g-11)) |
-| `outbox` | `Store` + `Relay` | **Chưa nối vào bất kỳ luồng nghiệp vụ nào** |
+| `outbox` | `Store` + `Relay` | ✅ đã nối từ GĐ 2: `trip.Repository.Save` ghi chuyến, sự kiện và bản tin outbox **trong cùng một giao dịch**, relay phát sau. Giao ít nhất một lần — handler phải chịu được lặp |
+| `settings` | Cấu hình vận hành trong CSDL + ảnh chụp bộ nhớ | Xem §3.10 |
+
+
+---
+
+## 3.10 `settings` — cấu hình vận hành sửa lúc đang chạy
+
+Giữ 5 nhóm cấu hình trong CSDL và phát chúng cho các module qua **hàm cung cấp**.
+
+| Thành phần | Vai trò |
+|---|---|
+| `groups.go` | 5 nhóm có kiểu rõ ràng + `Validate()` với **ngưỡng an toàn cứng** |
+| `schema.go` | Lược đồ biểu mẫu (nhãn, đơn vị, ngưỡng) cho giao diện quản trị |
+| `service.go` | Ảnh chụp bộ nhớ TTL 5 giây, `Current` / `Reload` / `Get` / `Put` / `History` |
+| `store_postgres.go` | Ghi `settings` + `settings_history` trong **một giao dịch**, khoá lạc quan |
+| `http.go` | 4 route quản trị + port `Auditor` |
+
+### Không module nghiệp vụ nào import `internal/settings`
+
+`pricing` không biết gì về bảng `settings`; nó chỉ biết mình có một hàm trả về cấu hình:
+
+```go
+// internal/pricing/service.go
+type ConfigProvider func(ctx context.Context) RuntimeConfig
+func (s *Service) UseConfig(p ConfigProvider) { s.cfg = p }
+```
+
+Việc dịch từ nhóm cấu hình sang kiểu riêng của từng module nằm ở **gốc lắp ráp**
+(`internal/app/settings.go`). Nhờ vậy `pricing` vẫn kiểm thử được bằng một hàm literal, và cấu hình
+động không rò rỉ thành một phụ thuộc mà mọi module đều phải mang theo.
+
+Cùng khuôn đó: `pricing.SurgeConfigProvider` · `matching.ConfigProvider` · `driver.DebtLimitProvider` ·
+`trip.CancelPolicyProvider` · `wallet.TaxProvider` · `wallet.MinPayoutProvider` ·
+`location.ThresholdProvider`.
+
+### Ba bất biến
+
+1. **`Current()` không bao giờ trả lỗi.** Nó nằm trên đường đi của mọi báo giá và mọi vòng dispatch;
+   CSDL lỗi thì dùng ảnh chụp cũ và chạy tiếp.
+2. **Ngưỡng an toàn không sửa được từ giao diện.** Vận hành đổi được biểu giá, nhưng không ai đẩy
+   được chiết khấu lên 60%.
+3. **Thay đổi không hồi tố.** Báo giá đã phát và chuyến đang chạy giữ nguyên giá cũ.

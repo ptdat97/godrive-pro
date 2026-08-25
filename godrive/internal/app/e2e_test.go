@@ -56,7 +56,10 @@ func login(t *testing.T, a *App, phone string, role authn.Role) string {
 	if tp.AccessToken == "" {
 		t.Fatal("thiếu access token")
 	}
-	if _, err := a.Issuer.Parse(tp.AccessToken, time.Now().UTC()); err != nil {
+	// Xác thực bằng ĐỒNG HỒ CỦA APP, không phải time.Now(). Trong test đồng hồ
+	// giả, token phát hành theo giờ giả mà đem so với giờ thật thì sẽ "hết hạn"
+	// vì lệch mốc chứ không phải vì có lỗi thật.
+	if _, err := a.Issuer.Parse(tp.AccessToken, a.Clock.Now().UTC()); err != nil {
 		t.Fatalf("token phát hành ra phải tự xác thực được: %v", err)
 	}
 	return tp.Account.ID

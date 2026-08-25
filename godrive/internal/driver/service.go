@@ -13,7 +13,8 @@ import (
 	"github.com/example/godrive/pkg/money"
 )
 
-// DebtLimit mặc định: tài xế được nợ tối đa 200.000đ tiền chiết khấu.
+// DefaultDebtLimit là hạn mức MẶC ĐỊNH: tài xế được nợ tối đa 200.000đ tiền
+// chiết khấu. Giá trị thực tế lấy từ cấu hình chỉnh được ở bảng điều khiển.
 const DefaultDebtLimit = money.VND(200000)
 
 // Biển số VN: 2 số + 1-2 chữ + dãy số. Chấp nhận cả có/không dấu chấm.
@@ -27,12 +28,13 @@ type TripPort interface {
 }
 
 type Service struct {
-	repo      Repository
-	bus       eventbus.Bus
-	clk       clock.Clock
-	debtLimit money.VND
-	balance   BalanceReader
-	trips     TripPort
+	repo        Repository
+	bus         eventbus.Bus
+	clk         clock.Clock
+	debtLimit   money.VND
+	debtLimitFn DebtLimitProvider
+	balance     BalanceReader
+	trips       TripPort
 }
 
 // UseTripPort bật đường tự khôi phục khi tài xế kẹt trạng thái.
@@ -175,6 +177,19 @@ type BalanceReader interface {
 // UseBalanceReader nối nguồn số dư thật vào cổng chặn công nợ.
 func (s *Service) UseBalanceReader(b BalanceReader) { s.balance = b }
 
+// DebtLimitProvider trả hạn mức công nợ hiện hành.
+type DebtLimitProvider func(ctx context.Context) money.VND
+
+// UseDebtLimit nối nguồn hạn mức động.
+func (s *Service) UseDebtLimit(p DebtLimitProvider) { s.debtLimitFn = p }
+
+func (s *Service) limit(ctx context.Context) money.VND {
+	if s.debtLimitFn != nil {
+		return s.debtLimitFn(ctx)
+	}
+	return s.debtLimit
+}
+
 // Reserve chuyển tài xế IDLE -> ASSIGNED bằng CAS. Đây là chốt chặn duy nhất
 // bảo đảm một tài xế không nhận hai chuyến song song.
 //
@@ -192,7 +207,7 @@ func (s *Service) Reserve(ctx context.Context, driverID string) error {
 		}
 		d.WalletBalance = bal
 	}
-	if err := d.CanAcceptTrip(s.debtLimit); err != nil {
+	if err := d.CanAcceptTrip(s.limit(ctx)); err != nil {
 		return err
 	}
 	return s.repo.UpdateStatus(ctx, driverID, StatusIdle, StatusAssigned, d.Version)
@@ -224,7 +239,7 @@ func (s *Service) SyncWalletBalance(ctx context.Context, driverID string, bal mo
 }
 
 // DebtLimit là hạn mức nợ đang áp dụng.
-func (s *Service) DebtLimit() money.VND { return s.debtLimit }
+func (s *Service) DebtLimit(ctx context.Context) money.VND { return s.limit(ctx) }
 
 func (s *Service) Get(ctx context.Context, driverID string) (*Driver, error) {
 	return s.repo.Get(ctx, driverID)

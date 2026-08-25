@@ -18,6 +18,17 @@ import (
 	"github.com/example/godrive/pkg/money"
 )
 
+// mockBase là mốc của đồng hồ giả: 10 giờ UTC HÔM NAY (17 giờ Việt Nam).
+//
+// Không ghim cứng ngày tháng. Một mốc như time.Date(2026, 8, 24, ...) đúng vào
+// hôm viết test rồi hỏng lặng lẽ vài ngày sau, khi khoảng cách tới giờ thật vượt
+// quá hạn của token — và lỗi hiện ra ở một test chẳng liên quan gì tới thời gian.
+// Giờ trong ngày vẫn cố định để phụ phí đêm và các luật theo khung giờ tất định.
+func mockBase() time.Time {
+	y, m, d := time.Now().UTC().Date()
+	return time.Date(y, m, d, 10, 0, 0, 0, time.UTC)
+}
+
 func newMockClockApp(t *testing.T) (*App, *clock.Mock) {
 	t.Helper()
 	cfg, err := config.Load()
@@ -25,7 +36,7 @@ func newMockClockApp(t *testing.T) (*App, *clock.Mock) {
 		t.Fatal(err)
 	}
 	cfg.Env = "test"
-	clk := clock.NewMock(time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC))
+	clk := clock.NewMock(mockBase())
 	a, err := NewWithClock(cfg, logger.New("error", false), clk)
 	if err != nil {
 		t.Fatal(err)

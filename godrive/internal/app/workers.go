@@ -38,6 +38,9 @@ func (a *App) StartWorkers(ctx context.Context) {
 	a.Bus.Subscribe(eventbus.TopicOfferAccepted, "driver-stats", a.onOfferStat(driver.StatsDelta{OffersAccepted: 1}))
 	a.Bus.Subscribe(eventbus.TopicTripRated, "driver-stats", a.onTripRated)
 
+	// Nạp lại cấu hình khi một pod khác vừa đổi.
+	a.subscribeSettings()
+
 	a.startMetricsConsumers()
 
 	go a.sweepOTPChallenges(ctx)

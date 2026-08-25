@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -195,12 +196,30 @@ func kycStateFor(approved bool) driver.KYCState {
 	return driver.KYCRejected
 }
 
+// RecordSettingChange ghi một lần đổi cấu hình vào nhật ký thao tác.
+//
+// settings_history đã giữ giá trị trước/sau đầy đủ; bản ghi ở đây để mọi thao
+// tác quản trị — duyệt hồ sơ, đổi cấu hình — nằm chung một dòng thời gian.
+func (s *Service) RecordSettingChange(ctx context.Context, actorID, key string,
+	oldValue, newValue json.RawMessage, reason string) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.Record(ctx, NewAuditEntry(actorID, "", ActionUpdateSettings,
+		TargetSettings, key, map[string]any{
+			"reason": reason,
+			"before": json.RawMessage(oldValue),
+			"after":  json.RawMessage(newValue),
+		}, s.clk.Now()))
+}
+
 // Audit trả nhật ký thao tác quản trị. Chỉ đọc — không có đường nào sửa hay xoá.
 func (s *Service) Audit(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
 	if s.audit == nil {
 		return []AuditEntry{}, nil
 	}
-	if f.TargetType != "" && f.TargetType != TargetDriver && f.TargetType != TargetTrip {
+	if f.TargetType != "" && f.TargetType != TargetDriver &&
+		f.TargetType != TargetTrip && f.TargetType != TargetSettings {
 		return nil, errs.Invalid("target_type_invalid", "Loại đối tượng không hợp lệ.")
 	}
 	return s.audit.List(ctx, f)

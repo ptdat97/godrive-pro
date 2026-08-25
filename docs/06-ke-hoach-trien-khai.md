@@ -245,6 +245,10 @@ tiền rời khỏi tài khoản. Gộp hai bước là bỏ mất chốt kiểm
 - [ ] Đối soát cuối ngày khớp 100% với sao kê cổng thật — *cần credential sandbox*
 - [ ] Hoá đơn phát hành lỗi → chuyến vẫn hoàn tất, hoá đơn vào hàng đợi retry — *chưa làm*
 - [ ] Tài xế có giấy tờ sắp hết hạn nhận cảnh báo trước 30/15/7 ngày — *chưa làm*
+- [x] **Vận hành đổi được biểu giá, chiết khấu, bậc surge, bán kính ghép chuyến, hạn mức công nợ
+      mà không cần lập trình viên** — có hiệu lực ≤ 5 giây, có ngưỡng an toàn cứng, buộc ghi lý do
+- [x] Thay đổi cấu hình **không hồi tố** lên báo giá đã phát và chuyến đang chạy
+- [x] Hai người cùng sửa một nhóm → người sau bị chặn, thay đổi của người trước không bị mất
 
 > **Còn lại của GĐ 4:** hoá đơn điện tử (cần chọn nhà cung cấp + credential sandbox), eKYC
 > (cần credential FPT.AI/VNPT), theo dõi hạn giấy tờ, `driver_status_history`, SOS/chia sẻ hành

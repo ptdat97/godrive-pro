@@ -14,6 +14,7 @@ import (
 
 	"github.com/example/godrive/internal/driver"
 	"github.com/example/godrive/pkg/geo"
+	"github.com/example/godrive/pkg/money"
 )
 
 type OfferStatus string
@@ -77,6 +78,10 @@ type Config struct {
 	EmptyRoundWait time.Duration
 	MinBatteryPc   int
 
+	// DebtLimit là hạn mức công nợ dùng để lọc ứng viên. Nằm ở đây thay vì đọc
+	// hằng số của module driver, để đổi từ bảng điều khiển có hiệu lực ngay.
+	DebtLimit money.VND
+
 	// Trọng số chấm điểm (điểm càng THẤP càng tốt).
 	WeightETA        float64
 	WeightRating     float64
@@ -95,6 +100,7 @@ func DefaultConfig() Config {
 		OfferTTL:       15 * time.Second,
 		EmptyRoundWait: 2 * time.Second,
 		MinBatteryPc:   15,
+		DebtLimit:      driver.DefaultDebtLimit,
 
 		WeightETA:        1.0,  // mỗi giây ETA = 1 điểm phạt
 		WeightRating:     60.0, // chênh 1 sao ~ 60 giây

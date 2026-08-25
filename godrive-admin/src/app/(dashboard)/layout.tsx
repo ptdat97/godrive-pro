@@ -8,6 +8,7 @@ const NAV = [
   { href: "/drivers", label: "Tài xế" },
   { href: "/trips", label: "Chuyến đi" },
   { href: "/live", label: "Bản đồ" },
+  { href: "/settings", label: "Cấu hình" },
 ];
 
 export default async function DashboardLayout({

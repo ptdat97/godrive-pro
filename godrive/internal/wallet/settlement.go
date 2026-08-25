@@ -88,6 +88,20 @@ type Settlement struct {
 	ledger Ledger
 	// MinPayout là ngưỡng chi trả tối thiểu cho đợt này.
 	MinPayout money.VND
+	minFn     MinPayoutProvider
+}
+
+// MinPayoutProvider trả ngưỡng chi trả hiện hành.
+type MinPayoutProvider func(ctx context.Context) money.VND
+
+// UseMinPayout nối nguồn ngưỡng động.
+func (s *Settlement) UseMinPayout(p MinPayoutProvider) { s.minFn = p }
+
+func (s *Settlement) minPayout(ctx context.Context) money.VND {
+	if s.minFn != nil {
+		return s.minFn(ctx)
+	}
+	return s.MinPayout
 }
 
 func NewSettlement(store SettlementStore, l Ledger) *Settlement {
@@ -141,7 +155,7 @@ func (s *Settlement) Calculate(ctx context.Context, from, to time.Time, now time
 		}
 		// Dưới ngưỡng thì GHI LẠI với trạng thái SKIPPED chứ không bỏ qua im
 		// lặng: tài xế phải tra được vì sao kỳ này mình không nhận tiền.
-		if bal < s.MinPayout {
+		if bal < s.minPayout(ctx) {
 			it.Status = ItemSkipped
 			it.Reason = "dưới ngưỡng chi trả tối thiểu"
 		} else {

@@ -135,7 +135,7 @@ func TestRedisClaimExpires(t *testing.T) {
 func TestRedisGeoIndexNearbyAndFilter(t *testing.T) {
 	rdb := testRedis(t)
 	ctx := context.Background()
-	clk := clock.NewMock(time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC))
+	clk := clock.NewMock(mockBase())
 	idx := location.NewRedisIndex(rdb, redisx.KeyPrefix, clk)
 
 	put := func(id string, p geo.Point, vt driver.VehicleType, st driver.Status, batt int) {
@@ -210,7 +210,7 @@ func TestRedisGeoIndexNearbyAndFilter(t *testing.T) {
 func TestRedisGeoIndexGetAndRemove(t *testing.T) {
 	rdb := testRedis(t)
 	ctx := context.Background()
-	clk := clock.NewMock(time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC))
+	clk := clock.NewMock(mockBase())
 	idx := location.NewRedisIndex(rdb, redisx.KeyPrefix, clk)
 
 	snap := location.Snapshot{

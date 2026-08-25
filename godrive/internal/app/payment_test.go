@@ -216,8 +216,13 @@ func TestSettlementPayIsIdempotent(t *testing.T) {
 		accID := login(t, a, fmt.Sprintf("091234567%d", i), authn.RoleDriver)
 		d, err := a.Drivers.Onboard(ctx, driver.OnboardInput{
 			AccountID: accID, FullName: "Tài", Phone: fmt.Sprintf("+8491234567%d", i), City: "HCM",
-			Vehicle:   driver.Vehicle{Type: driver.VehicleBike, Plate: fmt.Sprintf("59X%d-111.1%d", i+1, i)},
-			Documents: driver.Documents{NationalID: "079", DriverLicense: "790"},
+			Vehicle: driver.Vehicle{Type: driver.VehicleBike, Plate: fmt.Sprintf("59X%d-111.1%d", i+1, i)},
+			// CCCD/GPLX phải KHÁC nhau từng người: chỉ số duy nhất dựng trên
+			// blind index sẽ chặn người thứ hai dùng lại giấy tờ của người đầu.
+			Documents: driver.Documents{
+				NationalID:    fmt.Sprintf("07930000000%d", i),
+				DriverLicense: fmt.Sprintf("79012345678%d", i),
+			},
 		})
 		if err != nil {
 			t.Fatal(err)

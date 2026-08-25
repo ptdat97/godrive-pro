@@ -11,12 +11,14 @@ import (
 
 // Hành động được ghi nhật ký. Thêm hành động ghi mới thì thêm hằng ở đây.
 const (
-	ActionReviewKYC = "review_kyc"
+	ActionReviewKYC      = "review_kyc"
+	ActionUpdateSettings = "update_settings"
 )
 
 const (
-	TargetDriver = "driver"
-	TargetTrip   = "trip"
+	TargetDriver   = "driver"
+	TargetTrip     = "trip"
+	TargetSettings = "settings"
 )
 
 // AuditEntry là một dòng nhật ký thao tác quản trị. Bất biến: chỉ thêm mới.

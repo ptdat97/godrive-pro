@@ -15,7 +15,23 @@ type Service struct {
 	bus    eventbus.Bus
 	clk    clock.Clock
 	// TaxPermille = 45 (4,5%). Đặt 0 để tắt trong giai đoạn thử nghiệm.
+	//
+	// Chỉ dùng khi KHÔNG có nguồn cấu hình động; nếu có thì taxFn thắng.
 	TaxPermille int64
+	taxFn       TaxProvider
+}
+
+// TaxProvider trả tỉ lệ thuế khấu trừ hiện hành (phần nghìn).
+type TaxProvider func(ctx context.Context) int64
+
+// UseTaxProvider nối nguồn thuế động.
+func (s *Service) UseTaxProvider(p TaxProvider) { s.taxFn = p }
+
+func (s *Service) taxPermille(ctx context.Context) int64 {
+	if s.taxFn != nil {
+		return s.taxFn(ctx)
+	}
+	return s.TaxPermille
 }
 
 func NewService(l Ledger, bus eventbus.Bus, clk clock.Clock) *Service {
@@ -41,8 +57,8 @@ func (s *Service) SettleTrip(ctx context.Context, tripID, driverID string, fare,
 	if err := s.ledger.Post(ctx, tx); err != nil {
 		return err
 	}
-	if s.TaxPermille > 0 {
-		taxTx := WithholdTax("tx_tax_"+tripID, driverID, tripID, fare-fee, s.TaxPermille, now)
+	if tax := s.taxPermille(ctx); tax > 0 {
+		taxTx := WithholdTax("tx_tax_"+tripID, driverID, tripID, fare-fee, tax, now)
 		if err := s.ledger.Post(ctx, taxTx); err != nil {
 			return err
 		}

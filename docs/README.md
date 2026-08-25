@@ -1,8 +1,9 @@
 # GoDrive — Bộ tài liệu kiến trúc hệ thống
 
 > **Nguồn sự thật:** code trong [`godrive/`](../godrive) và [`godrive-admin/`](../godrive-admin).
-> Tài liệu này **đã đối chiếu từng mục với code thật** ngày **2026-08-24** (Go 1.26.5, macOS),
-> và cập nhật lại sau khi hoàn thành **Giai đoạn 0, 1, 2** và **phần kiểm chứng được của Giai đoạn 3**.
+> Tài liệu này **đã đối chiếu từng mục với code thật** ngày **2026-08-25** (Go 1.26.5, macOS),
+> và cập nhật lại sau khi hoàn thành **Giai đoạn 0, 1, 2**, **phần kiểm chứng được của Giai đoạn 3**,
+> phần thương mại của **Giai đoạn 4**, và **cấu hình vận hành sửa được từ giao diện quản trị**.
 > Khi code và tài liệu lệch nhau, code là chuẩn — và tài liệu phải được sửa, không phải ngược lại.
 >
 > [`RIDE_HAILING_IMPLEMENTATION_SPEC.md`](../RIDE_HAILING_IMPLEMENTATION_SPEC.md) là **đặc tả gốc**.
@@ -17,17 +18,18 @@
 |---|---|
 | Module Go | `github.com/example/godrive`, `go 1.22` |
 | Phụ thuộc ngoài | **4**: `pgx/v5` · `go-redis/v9` · `nats.go` · `paho.mqtt.golang` |
-| File `.go` | **116** |
-| Dòng mã (không tính test) | **11.916** |
-| Migration | **8** (`0001` … `0008`) |
+| File `.go` | **97** (không tính test) · **30** file TypeScript ở `godrive-admin` |
+| Dòng mã (không tính test) | **13.662** |
+| Migration | **9** (`0001` … `0009`) |
 | `go build` / `go vet` / `gofmt -l` | ✅ sạch |
-| `go test ./...` | ✅ **118 pass** (in-memory) · **157 pass** (đủ hạ tầng) |
-| `go test -race ./... -count=6` | ✅ pass toàn bộ, không flake |
-| Độ phủ toàn dự án | **63,4%** |
+| `go test ./...` | ✅ **146 pass** (in-memory) · **185 pass** (đủ hạ tầng) |
+| `go test -race ./...` | ✅ pass toàn bộ, không flake |
+| Độ phủ toàn dự án | **68,8%** (`-coverpkg=./...`) |
 | Chế độ chạy được đầu-cuối | in-memory · Postgres · **+ Redis + NATS + MQTT, nhiều bản sao** |
 | Nhiều bản sao | ✅ **2 tiến trình thật**; **SIGKILL một pod giữa chừng không mất việc** |
 | Quan sát | `/metrics` (Prometheus) · `/readyz` kiểm thật **Postgres, Redis, NATS, MQTT** |
 | Bất biến kiểm trên CSDL | **9 câu SQL**, đều sạch sau mỗi lần chạy đầu-cuối |
+| Cấu hình vận hành | **50 ô** trong **5 nhóm**, sửa từ giao diện quản trị, có hiệu lực ≤ 5 giây, không cần triển khai lại |
 
 ---
 
@@ -39,7 +41,7 @@
 | [GĐ 1 — Bền dữ liệu & đúng tiền](06-ke-hoach-trien-khai.md) | ✅ **xong** | Sổ cái Postgres · cổng chặn công nợ hoạt động thật · ghi sổ phí huỷ · bỏ hết float khỏi đường tiền · API ví · nhật ký thao tác admin |
 | [GĐ 2 — Đúng nghiệp vụ](06-ke-hoach-trien-khai.md) | ✅ **xong** | Chỉ số tài xế sống · `IdleSince` đo đúng · surge phản ứng cầu thật · Transactional Outbox (at-least-once) · offers + khoá chuyến xuống Postgres |
 | [GĐ 3 — Hạ tầng thật](06-ke-hoach-trien-khai.md) | ✅ **xong phần hạ tầng** | ✅ Redis (vị trí GEO, khoá chuyến, lời mời, báo giá, idempotency, rate limit toàn cụm) · ✅ **NATS JetStream** (ack — giết pod giữa chừng không mất việc) · ✅ **MQTT/EMQX** (luồng vị trí + Last Will) · ✅ OSRM `/route` + `/table` · ✅ metrics + `/readyz`<br>⬜ push FCM/APNs · H3 · tracing |
-| [GĐ 4 — Thương mại](06-ke-hoach-trien-khai.md) | 🟡 **một phần** | ✅ Cổng thanh toán MoMo/ZaloPay/VNPay (xác thực chữ ký thật) · ✅ Đối soát & chi trả idempotent · ✅ Mã hoá CCCD/GPLX (NĐ 13/2023) · ✅ Thu hồi token<br>⬜ hoá đơn điện tử · eKYC · theo dõi hạn giấy tờ · SOS |
+| [GĐ 4 — Thương mại](06-ke-hoach-trien-khai.md) | 🟡 **một phần** | ✅ Cổng thanh toán MoMo/ZaloPay/VNPay (xác thực chữ ký thật) · ✅ Đối soát & chi trả idempotent · ✅ Mã hoá CCCD/GPLX (NĐ 13/2023) · ✅ Thu hồi token · ✅ **Cấu hình vận hành sửa từ giao diện** (biểu giá, surge, ghép chuyến, ví, vị trí)<br>⬜ hoá đơn điện tử · eKYC · theo dõi hạn giấy tờ · SOS |
 | [GĐ 5 — Quy mô](06-ke-hoach-trien-khai.md) | ⬜ chưa | Tách service · khuyến mãi · chống gian lận nâng cao |
 
 > **Nguyên tắc xuyên suốt.** Không giao thứ chưa chạy thử được. **8 lỗi nghiêm trọng nhất của dự

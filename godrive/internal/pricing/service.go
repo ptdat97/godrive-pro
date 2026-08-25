@@ -13,7 +13,22 @@ import (
 	"github.com/example/godrive/pkg/money"
 )
 
+// QuoteTTL là hạn báo giá MẶC ĐỊNH. Giá trị thực tế lấy từ RuntimeConfig.
 const QuoteTTL = 5 * time.Minute
+
+// RuntimeConfig là phần cấu hình có thể đổi lúc chạy.
+//
+// Nhận qua hàm cung cấp chứ không nhận giá trị: cấu hình đổi từ bảng điều khiển
+// phải có hiệu lực ngay, không phải chờ khởi động lại.
+type RuntimeConfig struct {
+	Tariffs        map[driver.VehicleType]Tariff
+	QuoteTTL       time.Duration
+	NightStartHour int
+	NightEndHour   int
+}
+
+// ConfigProvider trả cấu hình hiện hành.
+type ConfigProvider func(ctx context.Context) RuntimeConfig
 
 type QuoteStore interface {
 	Save(ctx context.Context, q Quote) error
@@ -21,15 +36,28 @@ type QuoteStore interface {
 }
 
 type Service struct {
-	tariffs map[driver.VehicleType]Tariff
-	routes  RouteEngine
-	surge   SurgeProvider
-	store   QuoteStore
-	clk     clock.Clock
+	routes RouteEngine
+	surge  SurgeProvider
+	store  QuoteStore
+	clk    clock.Clock
+	cfg    ConfigProvider
 }
 
 func NewService(routes RouteEngine, surge SurgeProvider, store QuoteStore, clk clock.Clock) *Service {
-	return &Service{tariffs: DefaultTariffs(), routes: routes, surge: surge, store: store, clk: clk}
+	return &Service{routes: routes, surge: surge, store: store, clk: clk}
+}
+
+// UseConfig nối nguồn cấu hình động. Không gọi thì dùng biểu giá mặc định.
+func (s *Service) UseConfig(p ConfigProvider) { s.cfg = p }
+
+func (s *Service) config(ctx context.Context) RuntimeConfig {
+	if s.cfg != nil {
+		return s.cfg(ctx)
+	}
+	return RuntimeConfig{
+		Tariffs: DefaultTariffs(), QuoteTTL: QuoteTTL,
+		NightStartHour: 22, NightEndHour: 5,
+	}
 }
 
 type EstimateInput struct {
@@ -40,7 +68,8 @@ type EstimateInput struct {
 }
 
 func (s *Service) Estimate(ctx context.Context, in EstimateInput) (Quote, error) {
-	t, ok := s.tariffs[in.VehicleType]
+	cfg := s.config(ctx)
+	t, ok := cfg.Tariffs[in.VehicleType]
 	if !ok {
 		return Quote{}, errs.Invalid("vehicle_type_invalid", "Loại xe không được hỗ trợ.")
 	}
@@ -57,7 +86,7 @@ func (s *Service) Estimate(ctx context.Context, in EstimateInput) (Quote, error)
 	base := computeBase(t, r)
 
 	var night money.VND
-	if isNight(now) {
+	if isNight(now, cfg.NightStartHour, cfg.NightEndHour) {
 		night = base.MulPermille(t.NightSurchargePermille)
 	}
 
@@ -97,7 +126,7 @@ func (s *Service) Estimate(ctx context.Context, in EstimateInput) (Quote, error)
 		Total:         total,
 		PlatformFee:   fee,
 		DriverEarn:    total - fee,
-		ExpiresAt:     now.Add(QuoteTTL),
+		ExpiresAt:     now.Add(cfg.QuoteTTL),
 	}
 	if s.store != nil {
 		if err := s.store.Save(ctx, q); err != nil {
@@ -119,6 +148,11 @@ func (s *Service) EstimateAll(ctx context.Context, pickup, dropoff geo.Point) ([
 		out = append(out, q)
 	}
 	return out, nil
+}
+
+// Tariffs trả biểu giá hiện hành — dùng cho bảng điều khiển hiển thị.
+func (s *Service) Tariffs(ctx context.Context) map[driver.VehicleType]Tariff {
+	return s.config(ctx).Tariffs
 }
 
 func (s *Service) GetQuote(ctx context.Context, quoteID string) (Quote, error) {
@@ -148,8 +182,17 @@ func computeBase(t Tariff, r Route) money.VND {
 	return fare
 }
 
-// isNight: 22:00 - 05:00 theo giờ Việt Nam (UTC+7).
-func isNight(t time.Time) bool {
+// isNight theo giờ Việt Nam (UTC+7), khung giờ lấy từ cấu hình.
+//
+// Khung có thể vắt qua nửa đêm (22h–5h) hoặc không (13h–15h), nên phải xử lý
+// cả hai trường hợp chứ không chỉ so sánh một chiều.
+func isNight(t time.Time, startHour, endHour int) bool {
 	h := t.UTC().Add(7 * time.Hour).Hour()
-	return h >= 22 || h < 5
+	if startHour == endHour {
+		return false
+	}
+	if startHour < endHour {
+		return h >= startHour && h < endHour
+	}
+	return h >= startHour || h < endHour
 }

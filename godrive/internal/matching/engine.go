@@ -53,8 +53,15 @@ type ETAEngine interface {
 	ETASeconds(ctx context.Context, from []geo.Point, to geo.Point) ([]float64, error)
 }
 
+// ConfigProvider trả cấu hình ghép chuyến hiện hành.
+//
+// Đọc mỗi vòng dispatch chứ không giữ một bản sao: đổi bán kính hay trọng số từ
+// bảng điều khiển phải có hiệu lực ở vòng kế tiếp, không phải sau khi khởi động lại.
+type ConfigProvider func(ctx context.Context) Config
+
 type Engine struct {
 	cfg     Config
+	cfgFn   ConfigProvider
 	loc     LocationPort
 	drivers DriverPort
 	trips   TripPort
@@ -69,8 +76,20 @@ func NewEngine(cfg Config, loc LocationPort, d DriverPort, t TripPort, st Store,
 	return &Engine{cfg: cfg, loc: loc, drivers: d, trips: t, store: st, eta: eta, wallet: w, bus: bus, clk: clk}
 }
 
+// UseConfig nối nguồn cấu hình động.
+func (e *Engine) UseConfig(p ConfigProvider) { e.cfgFn = p }
+
+// config trả cấu hình hiện hành cho một lượt dispatch.
+func (e *Engine) config(ctx context.Context) Config {
+	if e.cfgFn != nil {
+		return e.cfgFn(ctx)
+	}
+	return e.cfg
+}
+
 // DispatchRound chạy một vòng chào mời cho chuyến. Trả về số lời mời đã gửi.
 func (e *Engine) DispatchRound(ctx context.Context, tripID string, round int) (int, error) {
+	cfg := e.config(ctx)
 	t, err := e.trips.Get(ctx, tripID)
 	if err != nil {
 		return 0, err
@@ -79,12 +98,12 @@ func (e *Engine) DispatchRound(ctx context.Context, tripID string, round int) (i
 		return 0, nil
 	}
 
-	radius := e.cfg.InitialRadiusM + float64(round)*e.cfg.RadiusStepM
-	if radius > e.cfg.MaxRadiusM {
-		radius = e.cfg.MaxRadiusM
+	radius := cfg.InitialRadiusM + float64(round)*cfg.RadiusStepM
+	if radius > cfg.MaxRadiusM {
+		radius = cfg.MaxRadiusM
 	}
 
-	cands, err := e.candidates(ctx, t, radius)
+	cands, err := e.candidates(ctx, t, radius, cfg)
 	if err != nil {
 		return 0, err
 	}
@@ -92,8 +111,8 @@ func (e *Engine) DispatchRound(ctx context.Context, tripID string, round int) (i
 		return 0, nil
 	}
 
-	cands = rank(e.cfg, cands, t.Pickup.Point)
-	n := e.cfg.BatchSize
+	cands = rank(cfg, cands, t.Pickup.Point)
+	n := cfg.BatchSize
 	if len(cands) < n {
 		n = len(cands)
 	}
@@ -111,7 +130,7 @@ func (e *Engine) DispatchRound(ctx context.Context, tripID string, round int) (i
 			ETASec:    c.ETASec,
 			PickupM:   c.DistanceM,
 			CreatedAt: now,
-			ExpiresAt: now.Add(e.cfg.OfferTTL),
+			ExpiresAt: now.Add(cfg.OfferTTL),
 		})
 	}
 	if err := e.store.SaveOffers(ctx, offers); err != nil {
@@ -126,7 +145,8 @@ func (e *Engine) DispatchRound(ctx context.Context, tripID string, round int) (i
 // Dispatch chạy toàn bộ chu trình cho tới khi có tài xế nhận hoặc hết vòng.
 // Gọi trong goroutine của worker; mỗi chuyến một chu trình.
 func (e *Engine) Dispatch(ctx context.Context, tripID string) error {
-	for round := 0; round < e.cfg.MaxRounds; round++ {
+	cfg := e.config(ctx)
+	for round := 0; round < cfg.MaxRounds; round++ {
 		sent, err := e.DispatchRound(ctx, tripID, round)
 		if err != nil {
 			return err
@@ -135,10 +155,10 @@ func (e *Engine) Dispatch(ctx context.Context, tripID string) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(e.cfg.OfferTTL):
+			case <-time.After(cfg.OfferTTL):
 			}
 		} else {
-			wait := e.cfg.EmptyRoundWait
+			wait := cfg.EmptyRoundWait
 			if wait <= 0 {
 				wait = 2 * time.Second
 			}
@@ -221,11 +241,11 @@ func (e *Engine) PendingOffers(ctx context.Context, driverID string) ([]Offer, e
 	return e.store.PendingForDriver(ctx, driverID)
 }
 
-func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64) ([]Candidate, error) {
+func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64, cfg Config) ([]Candidate, error) {
 	snaps, err := e.loc.Nearby(ctx, t.Pickup.Point, radius, location.Filter{
 		VehicleTypes: []driver.VehicleType{t.VehicleType},
 		Statuses:     []driver.Status{driver.StatusIdle},
-		MinBatteryPc: e.cfg.MinBatteryPc,
+		MinBatteryPc: cfg.MinBatteryPc,
 		FreshWithin:  location.StaleAfter,
 	})
 	if err != nil {
@@ -255,7 +275,7 @@ func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64) (
 			}
 			d.WalletBalance = bal
 		}
-		if err := d.CanAcceptTrip(driver.DefaultDebtLimit); err != nil {
+		if err := d.CanAcceptTrip(cfg.DebtLimit); err != nil {
 			continue
 		}
 		eligible = append(eligible, cand{snap: s, drv: d})

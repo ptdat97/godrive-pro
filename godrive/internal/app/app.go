@@ -26,11 +26,13 @@ import (
 	"github.com/example/godrive/internal/platform/httpx"
 	"github.com/example/godrive/internal/platform/redisx"
 	"github.com/example/godrive/internal/pricing"
+	"github.com/example/godrive/internal/settings"
 	"github.com/example/godrive/internal/trip"
 	"github.com/example/godrive/internal/wallet"
 	"github.com/example/godrive/pkg/clock"
 	"github.com/example/godrive/pkg/crypt"
 	"github.com/example/godrive/pkg/errs"
+	"github.com/example/godrive/pkg/id"
 	"github.com/example/godrive/pkg/idem"
 )
 
@@ -49,6 +51,8 @@ type App struct {
 	Wallet   *wallet.Service
 	Matcher  *matching.Engine
 	Admin    *admin.Service
+	// Settings là cấu hình nghiệp vụ chỉnh được từ bảng điều khiển.
+	Settings *settings.Service
 	Payments *payment.Service
 	// Settlement khác nil ở chế độ Postgres. Đối soát và chi trả cần bảng
 	// settlement_batches để chống trả tiền hai lần.
@@ -271,6 +275,15 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		}
 	}
 
+	// Cấu hình nghiệp vụ. Không có Postgres thì dùng kho bộ nhớ — chỉnh được
+	// nhưng mất khi tắt, đủ cho môi trường phát triển.
+	var setStore settings.Store = settings.NewMemoryStore()
+	if db != nil {
+		setStore = settings.NewPostgresStore(db)
+	}
+	settingsSvc := settings.NewService(setStore, clk, id.New)
+	settingsSvc.UsePublisher(bus)
+
 	var auditLog admin.AuditLog = admin.NewMemoryAuditLog()
 	if db != nil {
 		auditLog = admin.NewPostgresAuditLog(db)
@@ -288,7 +301,7 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		Cfg: cfg, Log: log, Clock: clk, Bus: bus, Issuer: issuer,
 		Identity: identitySvc, Drivers: driverSvc, Location: locSvc,
 		Pricing: pricingSvc, Trips: tripSvc, Wallet: walletSvc, Matcher: matcher,
-		Admin: adminSvc, Payments: paySvc, Settlement: settlement,
+		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Settlement: settlement,
 		Surge: surge, Outbox: obx, adminAuth: adminAuth,
 		Redis: rdb, Revoker: revoker, Metrics: newAppMetrics(),
 		db: db,
@@ -301,6 +314,13 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 			return nil, err
 		}
 		app.MQTT = mc
+	}
+
+	// Nối cấu hình động vào từng module TRƯỚC khi trả app ra: nếu không, những
+	// request đầu tiên sẽ chạy bằng hằng số mặc định thay vì cấu hình đã lưu.
+	app.wireSettings()
+	if err := settingsSvc.Reload(context.Background()); err != nil {
+		log.Warn("chưa nạp được cấu hình, tạm dùng giá trị mặc định", "err", err)
 	}
 
 	app.registerGauges()
@@ -360,12 +380,13 @@ func (a *App) Router() http.Handler {
 	// tự ghi có vào ví.
 	devTopUp := a.Cfg.DevAuth && (a.Payments == nil || !a.Payments.Enabled())
 	wallet.NewHandler(a.Wallet, a.Issuer, a.driverIDFromRequest,
-		a.Drivers.DebtLimit(), devTopUp).Register(mux)
+		a.Drivers.DebtLimit, devTopUp).Register(mux)
 	if a.Payments != nil {
 		payment.NewHandler(a.Payments, a.Issuer, a.driverIDFromRequest).Register(mux)
 	}
 	matching.NewHandler(a.Matcher, a.Issuer, a.driverIDFromRequest).Register(mux)
 	admin.NewHandler(a.Admin, a.Issuer, a.adminAuth).Register(mux)
+	settings.NewHandler(a.Settings, a.Issuer, a.Admin).Register(mux)
 
 	// 30 request/giây, burst 60 cho mỗi IP.
 	// Rate limit toàn cụm khi có Redis: bản in-process cho mỗi pod một hạn mức

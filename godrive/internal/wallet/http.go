@@ -1,6 +1,7 @@
 package wallet
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -18,14 +19,15 @@ type Handler struct {
 	svc      *Service
 	auth     *authn.Issuer
 	driverID func(*http.Request) (string, error)
-	// debtLimit để trả về cho ứng dụng tài xế biết ngưỡng bị chặn.
-	debtLimit money.VND
+	// debtLimit trả ngưỡng HIỆN HÀNH cho ứng dụng tài xế. Là hàm chứ không phải
+	// giá trị vì hạn mức chỉnh được từ bảng điều khiển.
+	debtLimit func(ctx context.Context) money.VND
 	// devTopUp mở endpoint nạp ví thủ công. CHỈ dùng ở dev.
 	devTopUp bool
 }
 
 func NewHandler(s *Service, a *authn.Issuer, resolver func(*http.Request) (string, error),
-	debtLimit money.VND, devTopUp bool) *Handler {
+	debtLimit func(ctx context.Context) money.VND, devTopUp bool) *Handler {
 	return &Handler{svc: s, auth: a, driverID: resolver, debtLimit: debtLimit, devTopUp: devTopUp}
 }
 
@@ -68,11 +70,12 @@ func (h *Handler) wallet(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	resp := walletResp{Balance: bal, CashOnHand: cash, DebtLimit: h.debtLimit}
-	if bal < h.debtLimit.Neg() {
+	limit := h.debtLimit(r.Context())
+	resp := walletResp{Balance: bal, CashOnHand: cash, DebtLimit: limit}
+	if bal < limit.Neg() {
 		resp.InDebt = true
 		// Nạp đúng chừng này là về lại đúng hạn mức.
-		resp.AmountToClear = h.debtLimit.Neg() - bal
+		resp.AmountToClear = limit.Neg() - bal
 	}
 	httpx.JSON(w, http.StatusOK, resp)
 }

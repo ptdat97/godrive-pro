@@ -106,14 +106,23 @@ thay cho `GEOGRAPHY` + GIST).
 ### Chạy test tích hợp Postgres
 
 Các test này **XOÁ SẠCH bảng** trước khi chạy, nên chúng dùng biến môi trường **riêng** —
-không bao giờ dùng lại `DATABASE_URL` để không có cách nào trỏ nhầm vào cơ sở dữ liệu thật:
+không bao giờ dùng lại `DATABASE_URL`:
 
 ```bash
-TEST_DATABASE_URL="postgres://postgres@localhost:5432/godrive?sslmode=disable" \
+createdb godrive_test
+migrate -path migrations -database "postgres://postgres@localhost:5432/godrive_test?sslmode=disable" up
+
+TEST_DATABASE_URL="postgres://postgres@localhost:5432/godrive_test?sslmode=disable" \
   go test ./internal/app/ -race -count=1
 ```
 
-Không đặt biến này thì 3 test Postgres tự `SKIP`, `make test` vẫn xanh.
+Không đặt biến này thì các test Postgres tự `SKIP`, `make test` vẫn xanh.
+
+> **Tên CSDL bắt buộc chứa `test`.** `requireTestDatabase` từ chối chạy nếu không, và báo lỗi chỉ rõ
+> cách tạo CSDL đúng. Biến môi trường riêng thôi chưa đủ: chỉ cần dán nhầm một chuỗi kết nối là bộ
+> test lặng lẽ `TRUNCATE` sạch cơ sở dữ liệu đó. Trước đây mặc định trong `Makefile` trỏ thẳng vào
+> CSDL dev — và từ khi cấu hình vận hành nằm trong bảng `settings`, mất nó là mất luôn biểu giá cùng
+> toàn bộ lịch sử thay đổi.
 
 ### Trạng thái chế độ Postgres
 
@@ -401,3 +410,84 @@ WHERE created_at >= date_trunc('day', now()) GROUP BY provider, status;
 > **`FAILED` khác `SKIPPED`.** `SKIPPED` là dưới ngưỡng chi trả — bình thường, số dư giữ lại cho
 > đợt sau. `FAILED` là ghi sổ hỏng sau khi đã giành quyền chi — cần người xem, vì dòng đó đã bị
 > đánh dấu rồi trả về thất bại.
+
+---
+
+## 8.11 Cấu hình vận hành (sửa từ giao diện quản trị)
+
+Từ **2026-08-25**, những con số điều khiển hệ thống không còn nằm trong mã nguồn. Chúng nằm trong
+bảng `settings`, sửa được ở **Bảng điều khiển → Cấu hình** (`/settings`), và **có hiệu lực trong
+vòng 5 giây mà không cần triển khai lại**.
+
+| Nhóm | Ô | Điều khiển cái gì |
+|---|---|---|
+| `pricing` | 24 | Biểu giá 3 loại xe (mở cửa, km, phút, giá sàn, phụ phí đêm, chiết khấu), hạn báo giá, khung giờ đêm |
+| `surge` | 5 | Bật/tắt, trần, cửa sổ đếm cầu, bán kính đếm cung, bậc thang |
+| `matching` | 13 | Bán kính và số vòng chào mời, số tài xế mỗi vòng, hạn lời mời, pin tối thiểu, 5 trọng số chấm điểm |
+| `wallet` | 5 | Hạn mức công nợ, thuế khấu trừ, ngưỡng chi trả, phí huỷ, cửa sổ huỷ miễn phí |
+| `location` | 3 | Ngưỡng ping quá hạn, tốc độ tối đa hợp lý, sai số GPS chấp nhận được |
+
+### Ba lớp bảo vệ
+
+1. **Ngưỡng cứng trong code** (`internal/settings/groups.go`). Mỗi ô có khoảng hợp lệ trả lời câu
+   hỏi *"giá trị nào, nếu ai đó gõ nhầm, sẽ gây thiệt hại không sửa được bằng cách sửa lại cấu
+   hình?"* — ví dụ chiết khấu tối đa 40%, trần tăng giá tuyệt đối 3,0 lần, thuế tối đa 20%.
+   Ngưỡng công bố cho giao diện và ngưỡng thực thi là **cùng một nguồn**, và
+   `TestSchemaBoundsMatchValidation` chốt chúng không trôi khỏi nhau.
+2. **Khoá lạc quan theo `version`.** Hai người cùng sửa thì người sau nhận `setting_version_conflict`
+   và phải tải lại — hệ thống **không tự gộp hai bản sửa**.
+3. **Bắt buộc ghi lý do** (≥ 5 ký tự), kiểm ở **tầng API** chứ không chỉ trên giao diện, nên gọi
+   thẳng bằng script cũng không lách được. Lý do vào `settings_history` và `admin_audit_log`.
+
+### Điều cần biết trước khi đổi
+
+> **Biểu giá là hồ sơ pháp lý.** Giá cước phải khớp hồ sơ kê khai giá cước đã nộp cho Sở GTVT. Đổi
+> trên giao diện mà chưa nộp hồ sơ mới là vi phạm — giao diện có cảnh báo này ngay trên biểu mẫu,
+> nhưng nó không thay được quy trình nộp hồ sơ.
+
+> **Thay đổi không hồi tố.** Báo giá đã phát cho khách và chuyến đang chạy giữ nguyên giá cũ; chỉ
+> báo giá và chuyến phát sinh *sau đó* mới dùng giá mới. Đây là hành vi cố ý, có test chốt
+> (`TestExistingQuoteUnaffectedByTariffChange`).
+
+> **Trọng số ghép chuyến đổi là thu nhập tài xế đổi.** Chỉ nên chạm khi có số liệu thật hoặc kết
+> quả A/B test. Đổi mò sẽ làm thu nhập biến động mà không ai giải thích được vì sao.
+
+> **Thuế khấu trừ cần kế toán thuế xác nhận.** Mức hiện hành cho cá nhân kinh doanh vận tải là
+> 45 phần nghìn (4,5%). Mặc định để **0** — bật lên là bắt đầu giữ lại tiền của tài xế.
+
+### Truy vết một thay đổi
+
+```sql
+-- Ai đổi gì, khi nào, vì sao — mới nhất trước
+SELECT version, changed_by, reason, at FROM settings_history
+WHERE key = 'pricing' ORDER BY at DESC LIMIT 20;
+
+-- Xem đúng những ô đã đổi giữa hai phiên bản liền nhau
+SELECT h.version, h.reason,
+       jsonb_pretty(h.old_value::jsonb) AS truoc,
+       jsonb_pretty(h.new_value::jsonb) AS sau
+FROM settings_history h WHERE h.key = 'pricing' AND h.version = 3;
+
+-- Nhóm nào đang chạy bằng mặc định trong code (chưa từng ai sửa)
+SELECT k FROM unnest(ARRAY['pricing','surge','matching','wallet','location']) k
+WHERE k NOT IN (SELECT key FROM settings);
+```
+
+Giao diện lịch sử tự so hai phiên bản và chỉ hiện những ô thật sự đổi, kèm nhãn tiếng Việt:
+*"Đơn giá mỗi km — Xe máy: 5.000 → 4.300"*. Bản ghi **đầu tiên** của mỗi nhóm so với **giá trị mặc
+định trong mã nguồn**, vì đó mới là thứ hệ thống đang chạy trước lần sửa đó.
+
+### Khôi phục khi cấu hình sai
+
+Cấu hình sai **không cần triển khai lại để sửa** — vào lại giao diện và sửa tiếp. Ba đường lùi:
+
+- **Sửa tiếp trên giao diện.** Nhanh nhất, và để lại dấu vết đúng.
+- **Lấy lại giá trị cũ từ lịch sử.** `SELECT old_value FROM settings_history WHERE key=$1 AND version=$2`
+  rồi `PUT` lại qua API với lý do rõ ràng.
+- **Xoá dòng để về mặc định.** `DELETE FROM settings WHERE key='pricing'` — hệ thống lùi về giá trị
+  trong mã nguồn ngay lần nạp lại kế tiếp. Dùng khi giá trị trong CSDL hỏng tới mức không sửa được.
+
+> **Giá trị hỏng không làm sập hệ thống.** Nếu ai đó sửa tay vào CSDL và ghi vào một giá trị không
+> hợp lệ, nhóm đó lùi về mặc định còn các nhóm khác vẫn nạp bình thường
+> (`TestCorruptStoredValueFallsBackToDefault`). Tương tự, CSDL lỗi thì hệ thống dùng ảnh chụp cũ
+> và **chạy tiếp** — dừng phục vụ vì không đọc được cấu hình là biến sự cố nhỏ thành sự cố lớn.

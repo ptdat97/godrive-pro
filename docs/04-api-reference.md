@@ -46,7 +46,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 
 ---
 
-## 4.2 Bảng endpoint đầy đủ (36 route)
+## 4.2 Bảng endpoint đầy đủ (46 route)
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
@@ -109,7 +109,10 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `GET` | `/v1/admin/trips/{id}/events` | `admin` | `admin.tripEvents` |
 | `GET` | `/v1/admin/live-map` | `admin` | `admin.liveMap` |
 | `GET` | `/v1/admin/audit` | `admin` | `admin.audit` |
-| `GET` | `/v1/admin/audit` | `admin` | `admin.audit` |
+| `GET` | `/v1/admin/settings` | `admin` | `settings.list` |
+| `GET` | `/v1/admin/settings/{key}` | `admin` | `settings.get` |
+| `PUT` | `/v1/admin/settings/{key}` | `admin` | `settings.put` |
+| `GET` | `/v1/admin/settings/{key}/history` | `admin` | `settings.history` |
 
 ### Ví tài xế
 
@@ -149,8 +152,10 @@ Chỉ đọc — không có endpoint nào sửa hay xoá nhật ký.
 
 | Endpoint cần | Service đã có | Mã gap |
 |---|---|---|
-| `GET /v1/drivers/me/trips` | `trip.Repository.ActiveByDriver` (đã cài, không ai gọi) | [G-24](05-doi-chieu-spec-code.md#g-24) |
-| `POST /v1/payments/webhook/{provider}` | — | [T-22](07-todo.md#t-22) |
+| `GET /v1/drivers/me/trips` | `trip.Repository.ActiveByDriver` — nay đã được `syncDriverStatus` và `GoOnline` dùng, nhưng vẫn chưa có endpoint | [G-24](05-doi-chieu-spec-code.md#g-24) |
+
+> `POST /v1/payments/webhook/{provider}` **đã có** từ GĐ 4 (MoMo/ZaloPay/VNPay, xác thực chữ ký
+> thật) — mục này trước đây liệt kê là thiếu.
 
 ---
 
@@ -284,6 +289,64 @@ curl -sX POST localhost:8080/v1/admin/drivers/drv_01J.../kyc \
 
 `pending` sắp xếp **chờ lâu nhất lên đầu** — đó là chuyến cần can thiệp trước.
 
+### Cấu hình vận hành
+
+Bốn route, tất cả yêu cầu vai trò `admin`:
+
+| Route | Trả về |
+|---|---|
+| `GET /v1/admin/settings` | Cả 5 nhóm, **kèm lược đồ biểu mẫu** |
+| `GET /v1/admin/settings/{key}` | Một nhóm |
+| `PUT /v1/admin/settings/{key}` | Ghi, trả nhóm sau khi ghi |
+| `GET /v1/admin/settings/{key}/history` | 20 thay đổi gần nhất, mới nhất trước |
+
+`key` ∈ `pricing` · `surge` · `matching` · `wallet` · `location`.
+
+**Lược đồ biểu mẫu đi kèm dữ liệu.** Nhãn tiếng Việt, đơn vị và ngưỡng hợp lệ do **backend** phát ra
+(`internal/settings/schema.go`), không phải giao diện tự chép — nếu chép thì hai bên sẽ trôi khỏi
+nhau, và người chỉnh sẽ thấy ô ghi "tối đa 500.000đ" rồi bị máy chủ từ chối ở 200.000đ.
+
+```json
+{ "groups": [ {
+    "key": "pricing", "label": "Biểu giá", "description": "…",
+    "warning": "Giá cước phải khớp hồ sơ kê khai giá cước đã nộp cho Sở GTVT…",
+    "sections": [ { "title": "Biểu giá Xe máy", "fields": [
+        { "path": "tariffs.BIKE.per_km", "label": "Đơn giá mỗi km",
+          "kind": "vnd", "min": 1000, "max": 200000 },
+        { "path": "tariffs.BIKE.platform_fee_permille", "label": "Chiết khấu nền tảng",
+          "kind": "permille", "min": 0, "max": 400,
+          "hint": "Phần nền tảng giữ lại. Phần còn lại là thu nhập tài xế." } ] } ],
+    "value": { "tariffs": { "BIKE": { … } }, "quote_ttl_seconds": 300, … },
+    "version": 3, "updated_by": "acc_…", "updated_at": "2026-08-25T14:29:16Z",
+    "is_default": false } ] }
+```
+
+`kind` quyết định giao diện vẽ ô nào: `vnd` · `permille` · `int` · `float` · `bool` · `hour` ·
+`seconds` · `meters` · `surge_steps` (bảng bậc thang thêm/bớt được dòng).
+
+**Ghi một thay đổi** — chỉ cần gửi những ô muốn đổi, phần còn lại giữ nguyên:
+
+```bash
+curl -sX PUT localhost:8080/v1/admin/settings/pricing \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{
+    "value": { "tariffs": { "BIKE": { "per_km": 5000 } } },
+    "version": 2,
+    "reason": "điều chỉnh theo giá xăng tháng 8, đã nộp hồ sơ kê khai ngày 20/8" }'
+```
+
+- **`version` bắt buộc và phải khớp.** Sai → `409 setting_version_conflict`. Hai người cùng sửa thì
+  người sau phải tải lại; hệ thống **không tự gộp**.
+- **`reason` bắt buộc, ≥ 5 ký tự.** Thiếu → `400 setting_reason_required`. Kiểm ở **API**, nên gọi
+  bằng script cũng không lách được.
+- **Gộp sâu.** Gửi `tariffs.BIKE.per_km` chỉ đổi đúng ô đó; các ô khác của xe máy và cả hai loại xe
+  còn lại giữ nguyên. Ô không gửi **không** bị đưa về 0.
+- **Có hiệu lực ≤ 5 giây** trên mọi pod (ảnh chụp trong bộ nhớ hết hạn, cộng sự kiện `settings.changed`
+  qua NATS để lan ngay). **Không hồi tố** lên báo giá đã phát và chuyến đang chạy.
+
+Mã lỗi riêng của nhóm này: `setting_version_conflict` · `setting_reason_required` ·
+`setting_out_of_range` · `setting_steps_not_ascending` · `setting_inconsistent` ·
+`setting_missing_tariff` · `setting_key_invalid` · `setting_value_required`.
+
 ---
 
 ## 4.5 Bảng mã lỗi
@@ -324,6 +387,14 @@ curl -sX POST localhost:8080/v1/admin/drivers/drv_01J.../kyc \
 | `target_type_invalid` | invalid | `admin.Audit` |
 | `status_invalid` | invalid | `admin` — bộ lọc sai |
 | `db_error` / `db_open_failed` / `internal_error` | internal | hạ tầng |
+| `setting_key_invalid` | invalid | `settings` — nhóm cấu hình không tồn tại |
+| `setting_value_required` | invalid | `settings` — thiếu nội dung |
+| `setting_reason_required` | invalid | `settings` — thiếu lý do thay đổi (≥ 5 ký tự) |
+| `setting_out_of_range` | invalid | `settings` — ngoài ngưỡng an toàn, thông báo nêu rõ khoảng hợp lệ |
+| `setting_steps_not_ascending` | invalid | `settings` — bậc thang tăng giá không tăng dần |
+| `setting_inconsistent` | invalid | `settings` — hai ô mâu thuẫn nhau (bán kính tối đa < vòng đầu) |
+| `setting_missing_tariff` | invalid | `settings` — thiếu biểu giá của một loại xe |
+| `setting_version_conflict` | conflict | `settings` — có người khác vừa sửa |
 
 ---
 
@@ -345,3 +416,22 @@ Trình duyệt ──► Next.js server (:3000) ──► godrive API (:8080)
 
 `src/lib/types.ts` là bản sao TypeScript của `internal/admin/domain.go`.
 **Sửa struct Go ⇒ phải sửa file này** — hiện chưa có sinh mã tự động, xem [07 — T-23](07-todo.md).
+
+### Trang cấu hình (`/settings/{key}`)
+
+Ngoại lệ của đoạn trên, và là ngoại lệ có chủ đích: trang này **không** chép lại nhãn hay ngưỡng nào
+sang TypeScript. Nó nhận lược đồ từ `GET /v1/admin/settings` rồi **tự dựng biểu mẫu**:
+
+| Việc | Nơi quyết định |
+|---|---|
+| Có những ô nào, nhãn gì, đơn vị gì, ngưỡng bao nhiêu | Go — `internal/settings/schema.go` |
+| Vẽ ô nào cho từng `kind`, quy đổi đơn vị khi gõ | React — `group-form.tsx` |
+| Chấp nhận hay từ chối một giá trị | Go — `groups.go`, **luôn là bên quyết định cuối** |
+
+Nhờ vậy thêm một ô cấu hình chỉ cần sửa Go; giao diện tự có ô mới mà không phải đụng tới. Hai test
+chốt hai chiều: `TestSchemaPathsExistInDefaults` (lược đồ không trỏ vào ô không tồn tại) và
+`TestEveryFieldIsEditableInUI` (không ô nào sửa được mà lại vắng mặt trên giao diện).
+
+Kiểm tra ngưỡng ở trình duyệt chỉ để **báo sớm** — nút lưu mờ đi khi có ô ngoài ngưỡng, nhưng máy
+chủ vẫn kiểm lại toàn bộ. Lịch sử thay đổi được so trực tiếp trên giao diện và chỉ hiện những ô thật
+sự đổi, dịch đường dẫn JSON sang nhãn tiếng Việt lấy từ chính lược đồ đó.

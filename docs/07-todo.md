@@ -474,6 +474,55 @@ Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị updat
 
 ---
 
+### <a id="t-29"></a>T-29 · ✅ Cấu hình vận hành sửa được từ giao diện `[G-35]` `P1`
+
+Trước đây mọi con số điều khiển hệ thống — biểu giá, chiết khấu, bậc thang surge, bán kính ghép
+chuyến, hạn mức công nợ — là hằng số trong mã nguồn. Đổi một con số nghĩa là sửa code, biên dịch
+lại, triển khai lại. Vận hành **không tự làm được**, nên trên thực tế chúng không bao giờ được đổi.
+
+- [x] Migration `0009_settings` — bảng `settings` (JSONB, `version`) + `settings_history` (trước/sau/lý do)
+- [x] `internal/settings` — 5 nhóm có kiểu rõ ràng, mỗi ô có **ngưỡng an toàn cứng**
+- [x] Ảnh chụp trong bộ nhớ, TTL 5 giây + sự kiện `settings.changed` qua NATS để lan ngay
+- [x] Các module đọc cấu hình qua **hàm cung cấp** (`ConfigProvider`), không module nghiệp vụ nào
+      import `internal/settings` — dịch sang kiểu riêng của từng module ở `internal/app/settings.go`
+- [x] API quản trị 4 route + **lược đồ biểu mẫu do backend phát ra**
+- [x] Trang `/settings/{key}` ở `godrive-admin` tự dựng biểu mẫu từ lược đồ, lịch sử so từng ô
+- [x] Bắt buộc ghi lý do ở **tầng API** (≥ 5 ký tự), vào cả `settings_history` lẫn `admin_audit_log`
+- [x] Khoá lạc quan theo `version` — hai người cùng sửa thì người sau phải tải lại
+
+**Verify** — `TestChangingTariffAffectsNextQuote` · `TestExistingQuoteUnaffectedByTariffChange` ·
+`TestChangingDebtLimitBlocksDriverImmediately` · `TestDisablingSurgeTakesEffect` ·
+`TestChangingMatchingRadiusTakesEffect` · `TestSettingChangeIsAudited` ·
+`TestSchemaBoundsMatchValidation` · `TestSettingsAPIRequiresAdmin` · `TestSettingsAPIRequiresReason`
+
+**Ba lỗi đáng kể lộ ra khi làm việc này**, đều thuộc loại đọc code không thấy:
+
+1. **PUT một phần xoá trắng ô không gửi.** `json.Unmarshal` chỉ ghi đè trường có mặt, nên dựng từ
+   struct rỗng thì một thay đổi chỉ gửi `debt_limit_vnd` sẽ đưa thuế và ngưỡng chi trả về 0 — đều
+   là giá trị *hợp lệ*, nên `Validate` không chặn được.
+2. **Gộp chưa đủ sâu.** Sửa xong tầng ngoài thì vẫn còn tầng trong: với `map[string]Tariff`,
+   `json.Unmarshal` dựng phần tử **rỗng** rồi mới đổ dữ liệu, nên sửa `per_km` của xe máy vẫn đưa
+   chiết khấu nền tảng của xe máy về 0.
+3. **Thay đổi bị TỪ CHỐI vẫn kịp làm hỏng cấu hình đang chạy.** `Snapshot` trả về theo giá trị
+   nhưng map bên trong dùng chung, nên quá trình *kiểm tra* một giá trị ghi thẳng vào biểu giá
+   sống: API trả lỗi đúng như mong đợi, mà mọi báo giá trong ≤ 5 giây sau đó tính bằng biểu giá đã
+   hỏng — rồi ảnh chụp tự nạp lại và mọi thứ trở lại bình thường như chưa có gì xảy ra.
+   Chốt bằng `TestRejectedChangeDoesNotCorruptRunningConfig` và `TestSnapshotIsIsolatedFromRunningConfig`.
+
+---
+
+### <a id="t-30"></a>T-30 · ✅ Chặn test tích hợp xoá nhầm CSDL thật `[P1]`
+
+- [x] `requireTestDatabase` từ chối chạy nếu tên CSDL không chứa `test`, báo lỗi kèm cách tạo đúng
+- [x] `Makefile` mặc định `godrive_test`, không còn là `godrive`
+- [x] `settings` + `settings_history` vào danh sách dọn giữa các lần chạy
+
+Bộ test tích hợp `TRUNCATE` mọi bảng. Mặc định cũ trỏ thẳng vào CSDL dev — chấp nhận được khi dữ
+liệu dev là thứ vứt đi, nhưng **không còn chấp nhận được** từ khi biểu giá và toàn bộ lịch sử thay
+đổi nằm trong CSDL.
+
+---
+
 ## Bảng tra nhanh gap → việc
 
 > ✅ = đã đóng và có test hồi quy.
@@ -518,11 +567,15 @@ Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị updat
 
 ## Việc **cần hỏi trước khi làm** (spec §7)
 
-- [ ] Chốt trọng số chấm điểm — cần dữ liệu thật + A/B test
-- [ ] Chốt bậc thang surge — cần dữ liệu cung/cầu thật
-- [ ] Chốt biểu giá — **cần hồ sơ kê khai giá cước đã nộp**
-- [ ] Bật `TaxPermille` — **cần kế toán thuế xác nhận**
-- [ ] Chốt `DefaultDebtLimit` — chính sách vận hành
-- [ ] Chốt chu kỳ settlement + payout — chính sách tài chính (**code đã sẵn sàng**, chỉ chờ chốt kỳ và ngưỡng `MinPayout`)
+> **Từ [T-29](#t-29), sáu mục đầu không còn cần lập trình viên.** Tất cả đã sửa được ở
+> **Bảng điều khiển → Cấu hình**, có hiệu lực trong 5 giây, có ngưỡng an toàn chặn giá trị thảm hoạ,
+> và mọi thay đổi đều buộc phải kèm lý do. Cái còn thiếu bây giờ là **quyết định**, không phải công cụ.
+
+- [ ] Chốt trọng số chấm điểm — cần dữ liệu thật + A/B test *(ô đã sẵn: `matching`)*
+- [ ] Chốt bậc thang surge — cần dữ liệu cung/cầu thật *(ô đã sẵn: `surge`)*
+- [ ] Chốt biểu giá — **cần hồ sơ kê khai giá cước đã nộp** *(ô đã sẵn: `pricing`, giao diện cảnh báo ngay trên biểu mẫu)*
+- [ ] Bật thuế khấu trừ — **cần kế toán thuế xác nhận** *(ô đã sẵn: `wallet.tax_permille`, mặc định 0)*
+- [ ] Chốt hạn mức công nợ — chính sách vận hành *(ô đã sẵn: `wallet.debt_limit_vnd`)*
+- [ ] Chốt chu kỳ settlement + payout — chính sách tài chính (**code đã sẵn sàng**; ngưỡng chi trả đã là ô cấu hình, chỉ còn chốt kỳ)
 - [ ] Chọn provider e-invoice — Viettel / VNPT / MISA + credential sandbox
 - [ ] Multi-region / sharding — **không quyết trước GĐ 5**

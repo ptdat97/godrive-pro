@@ -12,11 +12,21 @@ import (
 	"github.com/example/godrive/pkg/idem"
 )
 
-// FreeCancelWindow: khách huỷ trong 2 phút đầu sau khi ghép thì không mất phí.
+// FreeCancelWindow là cửa sổ huỷ miễn phí MẶC ĐỊNH: khách huỷ trong 2 phút đầu
+// sau khi ghép thì không mất phí. Giá trị thực tế lấy từ cấu hình.
 const FreeCancelWindow = 2 * time.Minute
 
-// CancelFee là phí huỷ trễ, sẽ được ghi có cho tài xế.
+// CancelFeeVND là phí huỷ trễ MẶC ĐỊNH, ghi có cho tài xế.
 const CancelFeeVND = 10000
+
+// CancelPolicy là chính sách huỷ chuyến, chỉnh được ở bảng điều khiển.
+type CancelPolicy struct {
+	FreeWindow time.Duration
+	FeeVND     int64
+}
+
+// CancelPolicyProvider trả chính sách hiện hành.
+type CancelPolicyProvider func(ctx context.Context) CancelPolicy
 
 type PricingPort interface {
 	GetQuote(ctx context.Context, quoteID string) (pricing.Quote, error)
@@ -28,6 +38,17 @@ type Service struct {
 	bus     eventbus.Bus
 	idem    idem.Store
 	clk     clock.Clock
+	policy  CancelPolicyProvider
+}
+
+// UseCancelPolicy nối nguồn chính sách huỷ động.
+func (s *Service) UseCancelPolicy(p CancelPolicyProvider) { s.policy = p }
+
+func (s *Service) cancelPolicy(ctx context.Context) CancelPolicy {
+	if s.policy != nil {
+		return s.policy(ctx)
+	}
+	return CancelPolicy{FreeWindow: FreeCancelWindow, FeeVND: CancelFeeVND}
 }
 
 func NewService(repo Repository, p PricingPort, bus eventbus.Bus, is idem.Store, clk clock.Clock) *Service {
@@ -219,7 +240,7 @@ func (s *Service) Cancel(ctx context.Context, in CancelInput) (*Trip, error) {
 	// Tính MỘT lần rồi dùng lại. Gọi hai lần thì đồng hồ có thể nhích qua ranh
 	// giới cửa sổ miễn phí giữa hai lần, làm nhật ký và sự kiện mâu thuẫn nhau —
 	// đúng loại sai lệch không giải thích nổi khi tài xế khiếu nại.
-	fee := s.cancelFee(t)
+	fee := s.cancelFee(ctx, t)
 	meta := map[string]any{"by": string(in.By), "reason": in.Reason}
 	if fee > 0 {
 		meta["cancel_fee"] = fee
@@ -240,14 +261,15 @@ func (s *Service) Cancel(ctx context.Context, in CancelInput) (*Trip, error) {
 }
 
 // cancelFee: khách huỷ sau khi tài xế đã nhận và quá cửa sổ miễn phí.
-func (s *Service) cancelFee(t *Trip) int64 {
+func (s *Service) cancelFee(ctx context.Context, t *Trip) int64 {
 	if t.CancelBy == nil || *t.CancelBy != CancelByRider || t.AssignedAt == nil {
 		return 0
 	}
-	if s.clk.Now().Sub(*t.AssignedAt) <= FreeCancelWindow {
+	p := s.cancelPolicy(ctx)
+	if s.clk.Now().Sub(*t.AssignedAt) <= p.FreeWindow {
 		return 0
 	}
-	return CancelFeeVND
+	return p.FeeVND
 }
 
 // Expire đánh dấu chuyến không tìm được tài xế.

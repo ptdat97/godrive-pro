@@ -261,7 +261,7 @@ func TestMQTTIngestsPingAndHandlesLastWill(t *testing.T) {
 		t.Skipf("bỏ qua: đặt %s để chạy test tích hợp MQTT", testMQTTEnv)
 	}
 	ctx := context.Background()
-	clk := clock.NewMock(time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC))
+	clk := clock.NewMock(mockBase())
 	d := &driver.Driver{
 		ID: "drv_mqtt_1", KYC: driver.KYCApproved, Status: driver.StatusIdle,
 		Vehicle: driver.Vehicle{Type: driver.VehicleBike},

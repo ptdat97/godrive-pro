@@ -10,12 +10,52 @@ import (
 
 // DemandSurge tính hệ số theo tỉ lệ cầu/cung trong từng ô lưới.
 // Đếm số yêu cầu chuyến và số tài xế rảnh trong cửa sổ trượt.
+// SurgeStep là một bậc của thang tăng giá. RatioX10 là ngưỡng cầu/cung nhân 10.
+type SurgeStep struct {
+	RatioX10 int64
+	Permille int64
+}
+
+// SurgeRuntime là cấu hình tăng giá chỉnh được lúc chạy.
+type SurgeRuntime struct {
+	Enabled       bool
+	MaxPermille   int64
+	Window        time.Duration
+	SupplyRadiusM float64
+	Steps         []SurgeStep
+}
+
+// SurgeConfigProvider trả cấu hình tăng giá hiện hành.
+type SurgeConfigProvider func(ctx context.Context) SurgeRuntime
+
 type DemandSurge struct {
 	mu        sync.Mutex
 	demand    map[string][]time.Time
 	window    time.Duration
 	supply    SupplyCounter
 	lastSweep time.Time
+	cfg       SurgeConfigProvider
+}
+
+// UseConfig nối nguồn cấu hình động.
+func (d *DemandSurge) UseConfig(p SurgeConfigProvider) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cfg = p
+}
+
+func (d *DemandSurge) runtime(ctx context.Context) SurgeRuntime {
+	d.mu.Lock()
+	fn := d.cfg
+	w := d.window
+	d.mu.Unlock()
+	if fn != nil {
+		return fn(ctx)
+	}
+	return SurgeRuntime{
+		Enabled: true, MaxPermille: MaxSurgePermille, Window: w, SupplyRadiusM: 2000,
+		Steps: []SurgeStep{{12, 1200}, {20, 1400}, {30, 1700}, {40, 2000}},
+	}
 }
 
 // SupplyCounter đếm tài xế rảnh quanh một điểm.
@@ -76,9 +116,13 @@ func (d *DemandSurge) Cells() int {
 // Hàm BẬC THANG chứ không liên tục: dễ giải thích cho vận hành và không nhạy
 // với nhiễu. Trần 2000 (×2.0) được clamp ở đây và một lần nữa ở Service.Estimate.
 func (d *DemandSurge) SurgePermille(ctx context.Context, at geo.Point, t time.Time) (int64, error) {
+	rt := d.runtime(ctx)
+	if !rt.Enabled {
+		return MinSurgePermille, nil
+	}
 	k := geo.CellOf(at).Key()
 	d.mu.Lock()
-	cut := t.Add(-d.window)
+	cut := t.Add(-rt.Window)
 	n := 0
 	for _, ts := range d.demand[k] {
 		if ts.After(cut) {
@@ -89,27 +133,28 @@ func (d *DemandSurge) SurgePermille(ctx context.Context, at geo.Point, t time.Ti
 
 	supply := 1
 	if d.supply != nil {
-		if c, err := d.supply.IdleCount(ctx, at, 2000); err == nil {
+		if c, err := d.supply.IdleCount(ctx, at, rt.SupplyRadiusM); err == nil {
 			supply = c
 		}
 	}
 	if supply < 1 {
 		supply = 1
 	}
-	// So sánh bằng số nguyên: demand×10 với supply×ngưỡng×10, tránh cả phép
-	// chia float lẫn việc 1.2 không biểu diễn chính xác được ở nhị phân.
+	// So sánh bằng số nguyên: demand×10 với supply×ngưỡng, tránh cả phép chia
+	// float lẫn việc 1.2 không biểu diễn chính xác được ở nhị phân.
 	r10 := int64(n) * 10
 	s10 := int64(supply)
-	switch {
-	case r10 >= 40*s10:
-		return 2000, nil
-	case r10 >= 30*s10:
-		return 1700, nil
-	case r10 >= 20*s10:
-		return 1400, nil
-	case r10 >= 12*s10:
-		return 1200, nil
-	default:
-		return MinSurgePermille, nil
+	out := MinSurgePermille
+	// Duyệt xuôi và giữ bậc CAO NHẤT thoả mãn: bậc thang đã được kiểm là tăng
+	// dần lúc lưu, nhưng không dựa vào đó để tính — nếu ai đó sửa tay trong CSDL
+	// thì kết quả vẫn phải hợp lý.
+	for _, st := range rt.Steps {
+		if r10 >= st.RatioX10*s10 && st.Permille > out {
+			out = st.Permille
+		}
 	}
+	if out > rt.MaxPermille {
+		out = rt.MaxPermille
+	}
+	return out, nil
 }
