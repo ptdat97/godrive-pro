@@ -18,9 +18,9 @@ Bản gốc đánh dấu **cả 633 mục đều chưa làm** (nay là **652** s
 
 | | Số mục | Nghĩa |
 |---|---|---|
-| `[x]` | **121** | Đã chạy được và **có test hoặc đã kiểm chứng trên hạ tầng thật** |
+| `[x]` | **122** | Đã chạy được và **có test hoặc đã kiểm chứng trên hạ tầng thật** |
 | `[~]` | **55** | Có một phần — dùng được ở mức dev, thiếu phần production hoặc thiếu mảnh cuối |
-| `[ ]` | **476** | Chưa bắt đầu |
+| `[ ]` | **475** | Chưa bắt đầu |
 
 Chi tiết bằng chứng cho từng mục `[x]`: [07 — TODO kỹ thuật](07-todo.md) ·
 [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md) · [08 — Vận hành](08-van-hanh.md).
@@ -55,10 +55,11 @@ lượng còn lại của P0 tính theo số mục.
 không đạt được bằng polling nếu không đánh đổi bằng tải máy chủ. Cần chiều xuống trước khi làm app,
 vì nó quyết định kiến trúc app.
 
-**3. MQTT không xác thực.** Broker đang mở: bất kỳ ai kết nối được cũng publish được vào
-`drv/{id}/loc` của người khác. Chống gian lận GPS ở tầng ứng dụng (tốc độ bất khả thi, sai số) vẫn
-chạy, nhưng nó lọc *nội dung* chứ không xác minh *danh tính người gửi*. Không được mở ra Internet
-trước khi có xác thực và ACL theo topic.
+**3. ~~MQTT không xác thực~~ — ĐÃ VÁ (2026-08-27, [T-32](07-todo.md#t-32)).** Broker từng mở toang:
+ai kết nối được cũng publish được vào `drv/{id}/loc` của người khác. Nay broker hỏi ngược lại
+backend ở cả hai bước — vào cửa và từng thao tác topic — và cấu hình broker đã thành mã nguồn thay
+vì mấy thao tác tay trên bảng điều khiển. Còn lại: ngắt kết nối đang mở khi khoá tài khoản giữa
+chừng.
 
 ### Ba mục bị bỏ sót so với bản gốc
 
@@ -160,7 +161,7 @@ Ngoài danh sách 633 mục, còn ba việc đã biết là thiếu nhưng chưa
 
 - [~] MQTT broker production.
 - [x] Driver location publish.
-- [ ] Location authentication.
+- [x] Location authentication.
 - [~] Device/session management.
 - [x] Heartbeat.
 - [x] Automatic reconnect.

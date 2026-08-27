@@ -46,6 +46,8 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | **`NATS_URL`** | *(rỗng)* | Rỗng ⇒ sự kiện đi qua bus in-process, handler **không có ack**: giết tiến trình giữa chừng sẽ mất việc đang xử lý |
 | **`MQTT_URL`** | *(rỗng)* | Rỗng ⇒ chỉ nhận ping qua HTTP. MQTT tiết kiệm pin và băng thông hơn nhiều trên máy Android giá rẻ, và có Last Will |
 | `MQTT_CLIENT_ID` | `godrive-<host>-<pid>` | **Phải khác nhau giữa các pod** — hai client trùng ID sẽ liên tục đá nhau ra khỏi broker |
+| **`MQTT_USERNAME`** | *(rỗng)* | Tài khoản dịch vụ của backend trên broker. Rỗng ⇒ nối mà không khai danh tính, chỉ dùng được khi broker đang mở. Xem [§8.12](#812-bảo-mật-mqtt) |
+| **`MQTT_PASSWORD`** | *(rỗng)* | Mật khẩu của tài khoản dịch vụ. **Bí mật** — không đặt trong kho mã |
 | `JWT_SECRET` | `dev-secret-doi-truoc-khi-len-production` | khoá ký HS256 |
 | `ACCESS_TTL` | `24h` | hạn token |
 | `DEV_AUTH` | `true` | trả mã OTP trong response **và mở `POST /v1/drivers/me/topup`** — chỉ dev |
@@ -324,6 +326,9 @@ ORDER BY 2;
 - [ ] Toàn bộ câu SQL bất biến ở §8.7 trả về kết quả sạch trên dữ liệu staging
 - [ ] `NATS_URL` đã đặt — không có nó thì giết pod giữa chừng sẽ mất việc đang xử lý
 - [ ] Mỗi pod có `MQTT_CLIENT_ID` **khác nhau**
+- [ ] Broker MQTT **đã bật xác thực**: `mosquitto_pub` nặc danh phải thất bại ([§8.12](#812-bảo-mật-mqtt))
+- [ ] `authorization.no_match = deny` và **không có** nguồn luật `file` của EMQX
+- [ ] `/internal/mqtt/auth` và `/internal/mqtt/authz` **không** tiếp cận được từ Internet
 - [x] `go test ./... -race -count=6` xanh ở **cả** in-memory lẫn Postgres ✅
 - [ ] `DEV_AUTH=false` ⇒ endpoint `POST /v1/drivers/me/topup` **không được đăng ký** (kiểm bằng curl, phải trả 404)
 - [ ] Sao lưu Postgres + đã **thử khôi phục thật**, không chỉ cấu hình sao lưu
@@ -491,3 +496,86 @@ Cấu hình sai **không cần triển khai lại để sửa** — vào lại g
 > hợp lệ, nhóm đó lùi về mặc định còn các nhóm khác vẫn nạp bình thường
 > (`TestCorruptStoredValueFallsBackToDefault`). Tương tự, CSDL lỗi thì hệ thống dùng ảnh chụp cũ
 > và **chạy tiếp** — dừng phục vụ vì không đọc được cấu hình là biến sự cố nhỏ thành sự cố lớn.
+
+---
+
+## 8.12 Bảo mật MQTT
+
+Trước **2026-08-27** broker **mở toang**: ai kết nối được cũng publish được vào `drv/{id}/loc` của
+bất kỳ tài xế nào — tức giả được vị trí người khác và qua đó giành chuyến ở khu vực mình không hề
+có mặt. Chống gian lận ở tầng ứng dụng (tốc độ bất khả thi, sai số GPS) vẫn chạy, nhưng nó lọc
+**nội dung** chứ không xác minh **người gửi**.
+
+### Cách hoạt động
+
+Broker không giữ danh sách người dùng. Nó **hỏi ngược lại backend** ở hai thời điểm:
+
+| Khi nào | Broker gọi | Backend trả lời |
+|---|---|---|
+| Thiết bị kết nối | `POST /internal/mqtt/auth` | cho vào hay không, có phải tài khoản dịch vụ không |
+| Thiết bị pub/sub một topic | `POST /internal/mqtt/authz` | được hay không |
+
+Danh tính tài xế, trạng thái khoá tài khoản và việc thu hồi phiên đã sống sẵn ở backend. Nhân bản
+chúng sang broker là tạo ra bản sao thứ hai chắc chắn sẽ lệch — tài xế bị khoá lúc 9 giờ mà 10 giờ
+vẫn đẩy được vị trí.
+
+**Mật khẩu MQTT của thiết bị chính là token phiên.** Không cấp thêm loại thông tin đăng nhập nào
+nữa: thêm một loại là thêm một thứ phải cấp, phải xoay vòng và phải thu hồi — trong khi token đã có
+đủ cả ba. Luật vào cửa nằm ở [internal/mqttauth](../godrive/internal/mqttauth), có test riêng.
+
+### Quyền của một tài xế
+
+```
+drv/{id}/loc      publish     ping vị trí
+drv/{id}/status   publish     Last Will
+drv/{id}/offer    subscribe   lời mời chuyến (T-31)
+drv/{id}/trip     subscribe   chuyển trạng thái chuyến (T-31)
+```
+
+Topic so khớp **chính xác**, không nhận ký tự đại diện. Backend dùng tài khoản dịch vụ riêng
+(`MQTT_USERNAME` / `MQTT_PASSWORD`) với cờ superuser để đọc topic của mọi tài xế.
+
+### Ba cái bẫy trong cấu hình mặc định của EMQX
+
+Cấu hình nằm ở [deploy/emqx/emqx.conf](../godrive/deploy/emqx/emqx.conf) và **phải là mã nguồn**.
+Chỉnh bằng bảng điều khiển hay REST API chỉ có tác dụng trên container đang chạy; dựng lại là quay
+về mặc định mở toang mà không có gì báo.
+
+1. **`authorization.no_match` mặc định là `allow`.** Thao tác không khớp luật nào thì *được phép* —
+   quên một luật không gây lỗi, nó chỉ lặng lẽ mở một cánh cửa. Phải đặt `deny`.
+2. **Bộ luật `file` mặc định kết thúc bằng `{allow, all}`**, và còn một dòng
+   `{allow, {ipaddr, "127.0.0.1"}, all, ["#"]}` mở toang cho mọi tiến trình chạy cùng máy với
+   broker. Cấu hình của GoDrive **bỏ hẳn nguồn `file`**.
+3. **`deny_action` mặc định là `ignore`** — im lặng bỏ gói, thiết bị tưởng đã gửi thành công. Đặt
+   `disconnect` để lỗi lộ ra ngay lần đầu.
+
+> **Hệ quả của `disconnect` khi viết test:** một vi phạm là mất phiên. Dùng chung một kết nối cho cả
+> phép thử hợp lệ lẫn phép thử vi phạm thì lệnh sau sẽ không bao giờ được gửi, và test đổ lỗi nhầm
+> cho luật ACL. Mỗi phép thử một kết nối riêng.
+
+> **EMQX 5.6 bỏ qua danh sách quyền gửi kèm phản hồi xác thực.** Chỗ đó có trong giao thức, nhưng
+> thử trên 5.6.1 thì nó không đọc — kết nối vào được mà không topic nào dùng được. `is_superuser`
+> thì lại có tác dụng, nên phản hồi rõ ràng *có* được đọc. Vì vậy phân quyền đi qua endpoint riêng,
+> nơi luật nằm trong Go và có test.
+
+### Kiểm tra sau khi triển khai
+
+```bash
+# Nặc danh PHẢI bị từ chối
+mosquitto_pub -h <broker> -t 'drv/bat-ky/loc' -m '{}' ; echo "mã thoát: $?"   # khác 0 là đúng
+
+# Ba bất biến, chạy trên hạ tầng thật
+TEST_MQTT_URL=tcp://<broker>:1883 TEST_API_URL=http://<api> \
+TEST_MQTT_USERNAME=... TEST_MQTT_PASSWORD=... \
+  go test ./internal/app/ -run 'TestDriverCannotPublish|TestCannotConnect|TestCannotHijack' -v
+```
+
+Test tự dừng với thông báo rõ ràng nếu broker vẫn đang mở — không có chuyện nó xanh một cách vô
+nghĩa vì chẳng có gì được bật.
+
+> **`MQTT_USERNAME`/`MQTT_PASSWORD` rỗng** thì backend nối vào broker mà không khai danh tính, và
+> log ghi một cảnh báo. Chỉ chấp nhận được ở máy phát triển.
+
+> **Hai endpoint `/internal/mqtt/*` không có middleware xác thực** — chính chúng là cửa xác thực,
+> và người gọi là broker chứ không phải người dùng. Phải chặn ở tầng mạng: chỉ broker mới gọi tới
+> được. Mở chúng ra Internet là biến chúng thành công cụ dò tài khoản.

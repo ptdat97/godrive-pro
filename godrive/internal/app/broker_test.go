@@ -269,15 +269,23 @@ func TestMQTTIngestsPingAndHandlesLastWill(t *testing.T) {
 	svc := location.NewService(location.NewMemoryIndex(clk), stubDriverPort{d}, clk)
 
 	consumer, err := location.NewMQTTConsumer(url,
-		fmt.Sprintf("godrive-test-%d", time.Now().UnixNano()), svc, logger.New("error", false))
+		fmt.Sprintf("godrive-test-%d", time.Now().UnixNano()), svc, logger.New("error", false),
+		testMQTTCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer consumer.Close()
 
-	pub := mqtt.NewClient(mqtt.NewClientOptions().
+	pubOpts := mqtt.NewClientOptions().
 		AddBroker(url).
-		SetClientID(fmt.Sprintf("godrive-pub-%d", time.Now().UnixNano())))
+		SetClientID(fmt.Sprintf("godrive-pub-%d", time.Now().UnixNano()))
+	// Publisher trong test đóng vai backend, không đóng vai thiết bị tài xế:
+	// nó ghi vào topic của một tài xế bất kỳ, việc mà chỉ tài khoản dịch vụ mới
+	// được phép. Luật của thiết bị được kiểm riêng ở mqtt_authz_test.go.
+	if c := testMQTTCreds(); c.Username != "" {
+		pubOpts.SetUsername(c.Username).SetPassword(c.Password)
+	}
+	pub := mqtt.NewClient(pubOpts)
 	if tok := pub.Connect(); tok.WaitTimeout(10*time.Second) && tok.Error() != nil {
 		t.Fatal(tok.Error())
 	}
@@ -409,5 +417,17 @@ func TestNATSRedeliversWhenHolderDies(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("việc mà pod A đang giữ phải được giao lại cho pod B sau khi hết AckWait")
+	}
+}
+
+// testMQTTCreds lấy thông tin đăng nhập của tài khoản dịch vụ cho test tích hợp.
+//
+// Từ khi broker bắt buộc xác thực ([T-32]), test cũng phải khai danh tính như
+// mọi client khác — không có ngoại lệ cho test, vì ngoại lệ đó sẽ là đường vào
+// mà không ai nhớ đã mở.
+func testMQTTCreds() location.Credentials {
+	return location.Credentials{
+		Username: os.Getenv("TEST_MQTT_USERNAME"),
+		Password: os.Getenv("TEST_MQTT_PASSWORD"),
 	}
 }

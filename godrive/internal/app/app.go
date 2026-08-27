@@ -18,6 +18,7 @@ import (
 	"github.com/example/godrive/internal/identity"
 	"github.com/example/godrive/internal/location"
 	"github.com/example/godrive/internal/matching"
+	"github.com/example/godrive/internal/mqttauth"
 	"github.com/example/godrive/internal/notification"
 	"github.com/example/godrive/internal/outbox"
 	"github.com/example/godrive/internal/payment"
@@ -309,7 +310,8 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	// MQTT cho luồng vị trí. Dựng SAU khi App đã sẵn sàng vì consumer bắt đầu
 	// nhận ping ngay khi nối, và nó cần locSvc hoạt động được.
 	if cfg.MQTTURL != "" {
-		mc, err := location.NewMQTTConsumer(cfg.MQTTURL, cfg.MQTTClientID, locSvc, log)
+		mc, err := location.NewMQTTConsumer(cfg.MQTTURL, cfg.MQTTClientID, locSvc, log,
+			location.Credentials{Username: cfg.MQTTUsername, Password: cfg.MQTTPassword})
 		if err != nil {
 			return nil, err
 		}
@@ -370,6 +372,15 @@ func (a *App) Router() http.Handler {
 	mux.HandleFunc("GET /readyz", a.readyz)
 	mux.Handle("GET /metrics", a.Metrics.reg.Handler())
 
+	// Cửa xác thực cho broker MQTT. Đăng ký cả khi chưa cấu hình MQTT_URL:
+	// broker có thể chạy ở nơi khác và trỏ về đây.
+	mqttSvc := mqttauth.NewService(a.Issuer, driverRefLookup{a.Drivers}, a.Clock,
+		mqttauth.ServiceAccount{Username: a.Cfg.MQTTUsername, Password: a.Cfg.MQTTPassword})
+	if a.Revoker != nil {
+		mqttSvc.UseRevoker(a.Revoker)
+	}
+	mqttauth.NewHandler(mqttSvc, a.Log).Register(mux)
+
 	identity.NewHandler(a.Identity, a.Issuer, a.Revoker).Register(mux)
 	driver.NewHandler(a.Drivers, a.Issuer).Register(mux)
 	location.NewHandler(a.Location, a.Issuer, a.driverIDFromRequest).Register(mux)
@@ -419,4 +430,17 @@ func (i idleCounter) IdleCount(ctx context.Context, at pointT, radiusM float64) 
 		FreshWithin: location.StaleAfter,
 	})
 	return len(snaps), err
+}
+
+// driverRefLookup thu hẹp driver.Service xuống đúng hai trường mà việc phân
+// quyền MQTT cần. Đặt ở gốc lắp ráp để internal/mqttauth không phải import
+// internal/driver, và để nó kiểm thử được bằng một struct dựng tay.
+type driverRefLookup struct{ svc *driver.Service }
+
+func (l driverRefLookup) GetByAccount(ctx context.Context, accountID string) (*mqttauth.DriverRef, error) {
+	d, err := l.svc.GetByAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	return &mqttauth.DriverRef{ID: d.ID, Suspended: d.Status == driver.StatusSuspended}, nil
 }

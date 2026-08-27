@@ -29,6 +29,11 @@ type Config struct {
 	// MQTTClientID phải KHÁC NHAU giữa các pod — hai client trùng ID sẽ liên
 	// tục đá nhau ra khỏi broker.
 	MQTTClientID string
+	// MQTTUsername/MQTTPassword là thông tin đăng nhập của CHÍNH backend vào
+	// broker. Rỗng ở chế độ dev thì broker phải đang mở — không dùng được ở
+	// production, xem docs/08 §8.12.
+	MQTTUsername string
+	MQTTPassword string
 	// OSRMURL rỗng => dùng ước lượng haversine (đường chim bay × hệ số uốn khúc).
 	// Sai số của ước lượng đó đi thẳng vào giá cước khách trả.
 	OSRMURL string
@@ -78,6 +83,8 @@ func Load() (Config, error) {
 		NATSURL:       get("NATS_URL", ""),
 		MQTTURL:       get("MQTT_URL", ""),
 		MQTTClientID:  get("MQTT_CLIENT_ID", "godrive-"+hostSuffix()),
+		MQTTUsername:  get("MQTT_USERNAME", ""),
+		MQTTPassword:  get("MQTT_PASSWORD", ""),
 		OSRMURL:       get("OSRM_URL", ""),
 		JWTSecret:     get("JWT_SECRET", "dev-secret-doi-truoc-khi-len-production"),
 		AccessTTL:     getDur("ACCESS_TTL", 24*time.Hour),

@@ -386,6 +386,7 @@ tâm bản đồ mặc định = Chợ Bến Thành `(10.7725, 106.6980)`
 | `notification` | `Pusher`, `SMSSender`, `OTPSender` | Chỉ `LogOTPSender` được nối; `LogPusher` **chưa ai dùng** — chờ FCM/APNs ở GĐ 3 ([G-11](05-doi-chieu-spec-code.md#g-11)) |
 | `outbox` | `Store` + `Relay` | ✅ đã nối từ GĐ 2: `trip.Repository.Save` ghi chuyến, sự kiện và bản tin outbox **trong cùng một giao dịch**, relay phát sau. Giao ít nhất một lần — handler phải chịu được lặp |
 | `settings` | Cấu hình vận hành trong CSDL + ảnh chụp bộ nhớ | Xem §3.10 |
+| `mqttauth` | Trả lời broker MQTT: thiết bị này là ai, được đụng vào topic nào | Mật khẩu MQTT **chính là token phiên**. Kiểm cả thu hồi phiên — `authn.Issuer.Parse` không làm việc đó, nó nằm ở middleware HTTP mà MQTT không đi qua. Xem [08 §8.12](08-van-hanh.md#812-bảo-mật-mqtt) |
 
 
 ---

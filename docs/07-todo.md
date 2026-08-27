@@ -555,7 +555,7 @@ Việc này phải xong **trước khi viết app**, vì nó quyết định ki�
 
 ---
 
-### <a id="t-32"></a>T-32 · Xác thực MQTT + ACL theo topic `P0` `bảo mật`
+### <a id="t-32"></a>T-32 · ✅ Xác thực MQTT + ACL theo topic `P0` `bảo mật`
 
 Broker đang **mở**. Ai kết nối được cũng publish được vào `drv/{id}/loc` của người khác — nghĩa là
 giả được vị trí của bất kỳ tài xế nào, và qua đó giành được chuyến ở khu vực mình không hề có mặt.
@@ -564,13 +564,26 @@ Chống gian lận ở tầng ứng dụng (tốc độ bất khả thi, sai s�
 chứ không xác minh **danh tính người gửi**. Ghi chú trong [mqtt.go](../godrive/internal/location/mqtt.go)
 đã nêu đúng điều này: *"broker phải bảo đảm ai publish vào topic nào"* — phần đó chưa làm.
 
-- [ ] Xác thực thiết bị khi kết nối (token phiên hoặc chứng chỉ máy khách)
-- [ ] ACL: `drv/{id}/#` chỉ cho phép chính tài xế `{id}`
-- [ ] Vòng đời thông tin đăng nhập theo phiên, thu hồi được khi khoá tài khoản
-- [ ] **Không mở broker ra Internet trước khi mục này xong**
+- [x] Xác thực thiết bị khi kết nối — mật khẩu MQTT **chính là token phiên**, không cấp thêm loại
+      thông tin đăng nhập nào nữa
+- [x] ACL: mỗi tài xế chỉ chạm được topic của chính mình, so khớp chính xác, không ký tự đại diện
+- [x] Thu hồi phiên cắt được đường MQTT — `authn.Issuer.Parse` **không** kiểm thu hồi (việc đó nằm
+      ở middleware HTTP mà MQTT không đi qua), nên `mqttauth` hỏi thẳng revoker, fail-closed
+- [x] Chặn cướp `clientId`: A đặt clientId của B là đá được B ra khỏi broker, vì MQTT cho client
+      sau cùng chiếm phiên — luật topic không chặn được vì nó xảy ra trước khi có topic nào
+- [x] Tài khoản dịch vụ riêng cho backend (`MQTT_USERNAME`/`MQTT_PASSWORD`), so sánh bằng thời gian
+      hằng định, và cấu hình rỗng **không** biến thành cửa sau
+- [x] Cấu hình broker thành **mã nguồn** ([deploy/emqx/emqx.conf](../godrive/deploy/emqx/emqx.conf)) —
+      chỉnh bằng bảng điều khiển chỉ sống trong container đang chạy
+- [ ] Ngắt kết nối ĐANG MỞ khi khoá tài khoản giữa chừng (gọi REST của EMQX) — hiện mới chặn ở lần
+      kết nối kế tiếp
 
-**Verify** — thiết bị A không publish được vào topic của thiết bị B; khoá tài khoản thì kết nối
-MQTT đang mở bị ngắt.
+**Verify** — `TestDriverCannotPublishToAnotherDriverTopic` · `TestCannotConnectAsAnotherDriver` ·
+`TestCannotHijackAnotherDriverClientID` chạy trên broker thật, kiểm bằng **bản tin có tới nơi hay
+không** chứ không tin mã trả về của lệnh publish. Cộng 13 test đơn vị ở `internal/mqttauth`.
+
+**Ba cái bẫy trong mặc định của EMQX**, xem [08 §8.12](08-van-hanh.md):
+`no_match=allow` · bộ luật `file` kết thúc bằng `{allow, all}` · `deny_action=ignore`.
 
 ---
 

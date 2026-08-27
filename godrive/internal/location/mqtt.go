@@ -28,6 +28,16 @@ const (
 	TopicStatus = "drv/+/status"
 )
 
+// Credentials là thông tin backend dùng để vào broker.
+//
+// Backend cần đọc topic của MỌI tài xế nên nó là tài khoản đặc quyền, tách hẳn
+// khỏi luật của thiết bị. Rỗng nghĩa là broker đang mở — chỉ chấp nhận được ở
+// máy phát triển.
+type Credentials struct {
+	Username string
+	Password string
+}
+
 // MQTTConsumer nhận ping vị trí từ broker MQTT và đưa vào Service.Ingest.
 type MQTTConsumer struct {
 	svc    *Service
@@ -39,7 +49,7 @@ type MQTTConsumer struct {
 
 // NewMQTTConsumer dựng consumer. clientID phải KHÁC NHAU giữa các pod — hai
 // client trùng ID sẽ liên tục đá nhau ra khỏi broker.
-func NewMQTTConsumer(url, clientID string, svc *Service, log *slog.Logger) (*MQTTConsumer, error) {
+func NewMQTTConsumer(url, clientID string, svc *Service, log *slog.Logger, creds Credentials) (*MQTTConsumer, error) {
 	c := &MQTTConsumer{svc: svc, log: log, IngestTimeout: 5 * time.Second}
 
 	opts := mqtt.NewClientOptions().
@@ -67,6 +77,13 @@ func NewMQTTConsumer(url, clientID string, svc *Service, log *slog.Logger) (*MQT
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			log.Error("mất kết nối MQTT", "err", err)
 		})
+
+	if creds.Username != "" {
+		opts.SetUsername(creds.Username).SetPassword(creds.Password)
+	} else {
+		log.Warn("MQTT không có thông tin đăng nhập: broker phải đang mở. " +
+			"Không được chạy như thế này ngoài máy phát triển")
+	}
 
 	c.client = mqtt.NewClient(opts)
 	if t := c.client.Connect(); t.WaitTimeout(10*time.Second) && t.Error() != nil {

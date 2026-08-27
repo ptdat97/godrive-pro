@@ -49,7 +49,8 @@
 > thấy được. Vì vậy NATS và MQTT chỉ được viết sau khi có broker thật để kiểm chứng.
 >
 > **Ba lỗ hổng chặn đường tới pilot** (xem [lộ trình](godrive-pro-TODO.md)): chưa có app cho khách
-> và tài xế · realtime chỉ có chiều lên nên lời mời phải hỏi bằng polling · MQTT chưa xác thực.
+> và tài xế · realtime chỉ có chiều lên nên lời mời phải hỏi bằng polling · ~~MQTT chưa xác thực~~
+> (đã vá 2026-08-27).
 >
 > **Còn lại của GĐ 3:** push FCM/APNs (cần credential thật của Google/Apple), H3 (Redis GEO đã lo
 > phần chỉ mục không gian nên giá trị giảm hẳn), và tracing OpenTelemetry.
@@ -70,7 +71,7 @@
 | 06 | [Kế hoạch triển khai](06-ke-hoach-trien-khai.md) | Làm gì trước, làm gì sau, mỗi giai đoạn xong khi nào |
 | 07 | [TODO](07-todo.md) | Danh sách việc thực thi được, kèm lệnh verify |
 | 08 | [Vận hành](08-van-hanh.md) | Biến môi trường, chạy, triển khai, sự cố thường gặp |
-| — | [**Lộ trình cạnh tranh**](godrive-pro-TODO.md) | 652 mục để thành nền tảng mobility thật — **121 xong · 55 một phần · 476 chưa**, kèm ba lỗ hổng chặn pilot |
+| — | [**Lộ trình cạnh tranh**](godrive-pro-TODO.md) | 652 mục để thành nền tảng mobility thật — **122 xong · 55 một phần · 475 chưa**, kèm ba lỗ hổng chặn pilot |
 
 ---
 

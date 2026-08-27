@@ -54,4 +54,7 @@ test-integration:
 	TEST_REDIS_URL="$${TEST_REDIS_URL:-redis://localhost:6379/15}" \
 	TEST_NATS_URL="$${TEST_NATS_URL:-nats://localhost:4222}" \
 	TEST_MQTT_URL="$${TEST_MQTT_URL:-tcp://localhost:1883}" \
+	TEST_MQTT_USERNAME="$${TEST_MQTT_USERNAME:-godrive-backend}" \
+	TEST_MQTT_PASSWORD="$${TEST_MQTT_PASSWORD:-}" \
+	TEST_API_URL="$${TEST_API_URL:-}" \
 	go test ./... -race -count=1
