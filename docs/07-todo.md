@@ -523,6 +523,206 @@ liệu dev là thứ vứt đi, nhưng **không còn chấp nhận được** t�
 
 ---
 
+### <a id="t-31"></a>T-31 · Chiều xuống realtime — máy chủ đẩy được tin tới thiết bị `P0`
+
+**Lỗ hổng lớn nhất về kỹ thuật.** MQTT hiện chỉ có chiều lên: máy chủ `Subscribe` vào `drv/+/loc`
+và `drv/+/status`, không có một lệnh `Publish` nào đi ngược lại. Hệ quả:
+
+- Tài xế biết có lời mời bằng cách **hỏi liên tục** `GET /v1/offers`. Lời mời chỉ sống 15 giây, nên
+  muốn kịp thì phải hỏi mỗi 2–3 giây — nhân với số tài xế online là tải vô ích, và vẫn không đạt
+  được mục tiêu *offer delivery p95 < 1s*.
+- Khách **không thấy xe đang chạy tới**. Vị trí tài xế có trong Redis nhưng không có đường nào đẩy
+  tới máy khách.
+- Đổi trạng thái chuyến (tài xế đã tới, bắt đầu chạy, hoàn tất) cũng chỉ biết được bằng cách hỏi.
+
+Việc này phải xong **trước khi viết app**, vì nó quyết định kiến trúc kết nối của app.
+
+- [x] ~~Chọn cơ chế~~ → **MQTT hai chiều** (chốt 2026-08-27). EMQX đã chạy sẵn và app tài xế vốn
+      phải giữ kết nối MQTT để gửi vị trí, nên thêm chiều xuống là mở rộng cái đang có chứ không
+      dựng hạ tầng mới. MQTT sinh ra cho mạng di động chập chờn: QoS 1, phiên bền, Last Will —
+      đúng những thứ mà WebSocket tự cài sẽ phải làm lại từ đầu.
+- [ ] Topic chiều xuống: `drv/{id}/offer`, `drv/{id}/trip`, `rdr/{id}/trip` (QoS 1, `retain=false`)
+- [ ] Phát từ nơi đã có sự kiện: consumer NATS, không gọi MQTT rải rác trong Service
+- [ ] Đẩy lời mời tới đúng tài xế được chào
+- [ ] Đẩy vị trí tài xế tới đúng khách đang trong chuyến
+- [ ] Đẩy chuyển trạng thái chuyến tới cả hai phía
+- [ ] Xử lý mất kết nối: thiết bị vào lại phải lấy được trạng thái hiện tại, không chỉ tin mới
+- [ ] Không thay thế `GET /v1/offers` — giữ làm đường dự phòng khi kết nối đẩy chết
+- [ ] Kết nối MQTT của khách chỉ mở trong lúc có chuyến, đóng khi chuyến kết thúc
+
+**Verify** — đo độ trễ từ lúc `DispatchRound` tạo lời mời tới lúc thiết bị nhận được, p95 < 1s với
+1.000 tài xế online mô phỏng.
+
+---
+
+### <a id="t-32"></a>T-32 · Xác thực MQTT + ACL theo topic `P0` `bảo mật`
+
+Broker đang **mở**. Ai kết nối được cũng publish được vào `drv/{id}/loc` của người khác — nghĩa là
+giả được vị trí của bất kỳ tài xế nào, và qua đó giành được chuyến ở khu vực mình không hề có mặt.
+
+Chống gian lận ở tầng ứng dụng (tốc độ bất khả thi, sai số GPS) vẫn chạy, nhưng nó lọc **nội dung**
+chứ không xác minh **danh tính người gửi**. Ghi chú trong [mqtt.go](../godrive/internal/location/mqtt.go)
+đã nêu đúng điều này: *"broker phải bảo đảm ai publish vào topic nào"* — phần đó chưa làm.
+
+- [ ] Xác thực thiết bị khi kết nối (token phiên hoặc chứng chỉ máy khách)
+- [ ] ACL: `drv/{id}/#` chỉ cho phép chính tài xế `{id}`
+- [ ] Vòng đời thông tin đăng nhập theo phiên, thu hồi được khi khoá tài khoản
+- [ ] **Không mở broker ra Internet trước khi mục này xong**
+
+**Verify** — thiết bị A không publish được vào topic của thiết bị B; khoá tài khoản thì kết nối
+MQTT đang mở bị ngắt.
+
+---
+
+### <a id="t-33"></a>T-33 · Thông báo đẩy FCM/APNs `[G-11]` `P0`
+
+Khung `notification.Pusher` có từ đầu nhưng **chưa ai gọi**. Không có push thì tài xế phải mở app
+mới biết có chuyến, và khách không được báo khi tài xế tới nơi.
+
+- [ ] Nối FCM (Android) và APNs (iOS) — *cần credential Google/Apple*
+- [ ] Bảng `device_tokens`: đăng ký, làm mới, thu hồi khi đăng xuất
+- [ ] Mẫu thông báo: có lời mời · tài xế đã tới · chuyến hoàn tất · thanh toán · kết quả duyệt hồ sơ
+- [ ] Thử lại khi gửi lỗi, dọn token chết
+
+---
+
+### <a id="t-34"></a>T-34 · Tỉ lệ huỷ chuyến chưa vào hàm chấm điểm `P1`
+
+Migration 0005 thêm cột `trips_cancelled` và có code cộng dồn, nhưng
+[scoring.go](../godrive/internal/matching/scoring.go) chỉ dùng ETA, đánh giá, tỉ lệ nhận, thời gian
+chờ và hướng xe. **Không ai đọc `trips_cancelled`.**
+
+Tài xế nhận chuyến rồi huỷ đang được xếp hạng ngang tài xế không bao giờ huỷ — mà huỷ sau khi ghép
+còn hại hơn từ chối ngay, vì khách đã chờ xong mới phải tìm lại từ đầu.
+
+- [ ] Thêm `WeightCancel` vào `matching.Config` và vào nhóm cấu hình `matching`
+- [ ] Làm mượt Bayes như `Acceptance` để tài xế mới không bị phạt oan
+- [ ] Đặt mặc định **0** và bật sau khi có dữ liệu — đổi trọng số là đổi thu nhập tài xế
+
+**Verify** — test kiểu `TestPoorAcceptanceRateSinksDriverInRanking` cho tỉ lệ huỷ.
+
+---
+
+### <a id="t-35"></a>T-35 · Test tải — đo thay vì đoán `P1`
+
+Mọi ngưỡng hiệu năng trong tài liệu (`API p95 < 100ms`, `matching p95 < 300ms`,
+`offer delivery p95 < 1s`, `location freshness < 3s`) hiện là **mục tiêu chưa có số đo nào**.
+Không biết hệ thống chịu được bao nhiêu tài xế online thì không thể chốt quy mô pilot.
+
+- [ ] Bộ sinh tải: N tài xế ảo publish vị trí + M khách đặt xe
+- [ ] Đo ở 1.000 tài xế online, 100.000 bản tin vị trí/phút
+- [ ] Đo độ trễ dispatch và độ trễ giao lời mời
+- [ ] Chạy ngâm 24 giờ tìm rò rỉ bộ nhớ và kết nối
+- [ ] Ghi số đo thật vào [08 §8.9](08-van-hanh.md) thay cho ngưỡng phỏng đoán
+
+---
+
+### <a id="t-36"></a>T-36 · Hoàn tiền và chốt sổ ngày `P1` `tiền`
+
+Đường tiền vào đã chắc, **đường tiền ra chưa đủ**:
+
+- [ ] Hoàn tiền (huỷ sau khi đã thu, khiếu nại được duyệt) — bút toán đảo, không sửa bút toán cũ
+- [ ] Chốt sổ cuối ngày: tổng thu, chiết khấu, thuế, phải trả tài xế
+- [ ] Đối soát tự động với sao kê cổng thanh toán, nêu ra dòng lệch
+- [ ] Báo cáo kiểm toán tài chính xuất được cho kế toán
+- [ ] Chargeback — *chờ điều khoản thật của cổng thanh toán*
+
+---
+
+### <a id="t-37"></a>T-37 · Cảnh báo hạn giấy tờ tài xế `P1` `tuân thủ`
+
+`InsuranceUntil` được lưu nhưng **không có gì đọc nó**. Tài xế chạy với bảo hiểm hết hạn là rủi ro
+pháp lý thuộc về nền tảng.
+
+- [ ] Job quét hạn bảo hiểm, GPLX, đăng ký xe
+- [ ] Cảnh báo trước 30/15/7 ngày qua push và trên app
+- [ ] Hết hạn thì tự chuyển `SUSPENDED`, không chờ người xử lý tay
+- [ ] Hiện trên bảng điều khiển vận hành
+
+---
+
+### <a id="t-38"></a>T-38 · Tìm kiếm địa điểm (geocoding) `P1` `theo Rider App`
+
+Khách phải nhập được *"Chợ Bến Thành"* chứ không phải toạ độ. Hiện chưa có nhà cung cấp nào được
+nối — [pricing/domain.go](../godrive/internal/pricing/domain.go) mới chỉ ghi chú dự định dùng
+Goong/VietMap.
+
+- [ ] Chọn nhà cung cấp (Goong · VietMap · Mapbox) — *cần quyết định + credential*
+- [ ] Tìm địa điểm theo từ khoá, ưu tiên gần vị trí hiện tại
+- [ ] Toạ độ → địa chỉ, để hiện tên điểm đón
+- [ ] Cache kết quả, vì đây là API tính tiền theo lượt gọi
+- [ ] Địa điểm gần đây, Nhà/Cơ quan/Yêu thích
+
+---
+
+### <a id="t-39"></a>T-39 · Driver App (Flutter) `P0`
+
+Chốt 2026-08-27: **làm app tài xế trước, app khách sau.** Pilot chết vì thiếu tài xế online chứ
+không vì thiếu khách; và chạy thử realtime với vài chục tài xế thì đo được độ trễ thật trước khi
+mở cho khách. Trong giai đoạn đầu khách đặt qua tổng đài hoặc web tối giản.
+
+Phụ thuộc: [T-31](#t-31) và [T-32](#t-32) phải xong trước — nếu không, phần kết nối của app sẽ
+phải viết lại.
+
+- [ ] Khung app + đăng nhập OTP
+- [ ] Đăng ký hồ sơ, tải CCCD/GPLX/đăng ký xe/bảo hiểm, xem trạng thái duyệt
+- [ ] Bật/tắt nhận chuyến; định vị nền; giữ kết nối MQTT và tự nối lại
+- [ ] Nhận lời mời qua MQTT, nhận/từ chối, đếm ngược theo hạn lời mời
+- [ ] Vòng đời chuyến: tới nơi → bắt đầu → hoàn tất, dẫn đường tới điểm đón
+- [ ] Ví: số dư, công nợ tiền mặt, sao kê, nạp tiền
+- [ ] Thu nhập theo ngày/tuần/tháng
+- [ ] Thông báo đẩy ([T-33](#t-33))
+
+---
+
+### <a id="t-40"></a>T-40 · Rider App `P0` `sau T-39`
+
+- [ ] Quyết định nền tảng khi tới lượt (Flutter hay web/PWA) — chưa chốt
+- [ ] Đặt xe đầu-cuối, xem xe chạy tới theo thời gian thực, thanh toán, đánh giá
+- [ ] Cần [T-38](#t-38) (tìm kiếm địa điểm) trước khi dùng được thật
+
+---
+
+### <a id="t-41"></a>T-41 · Vùng đa giác: ranh giới phục vụ, đường cấm, geofence `P1` `[Geo]`
+
+Nhánh duy nhất của [Geo Platform](godrive-pro-TODO.md#p18-godrive-geo-platform) **làm được ngay**,
+không chờ app và không chờ dữ liệu chuyến thật.
+
+Nền đã sẵn: PostGIS chạy thật với `driver_locations.geom GEOGRAPHY(POINT, 4326)` + chỉ mục GIST.
+Thêm bảng vùng dạng đa giác là mở rộng cái đã kiểm chứng.
+
+- [ ] Bảng `service_zones` (`GEOGRAPHY(POLYGON)`, GIST) + bảng luật gắn theo vùng
+- [ ] **Ranh giới phục vụ**: từ chối đặt xe ngoài vùng **ngay khi báo giá**, không để khách chờ hết
+      ba vòng chào mời mới báo không tìm được tài xế
+- [ ] **Đường cấm**: cấm theo loại xe và theo khung giờ — dẫn tài xế vào đường cấm là phạt tiền thật
+      cho họ. Trừ điểm ứng viên phải đi qua vùng cấm, hoặc loại hẳn
+- [ ] **Geofence**: vùng sân bay / bến xe / trung tâm thương mại, gắn được phụ phí và điểm đón riêng
+- [ ] Sửa vùng từ giao diện quản trị (vẽ trên Leaflet đã có), qua cùng cơ chế
+      [cấu hình](08-van-hanh.md) — có ngưỡng, có lịch sử, có lý do
+- [ ] Nạp vùng vào bộ nhớ như ảnh chụp cấu hình: kiểm điểm-trong-đa-giác nằm trên đường đi của mọi
+      lần báo giá, không thể hỏi CSDL mỗi lần
+
+**Verify** — đặt xe ngoài vùng phục vụ trả mã lỗi riêng ngay ở bước báo giá; tài xế xe máy không
+được chào chuyến bắt buộc đi qua tuyến cấm xe máy trong khung giờ cấm.
+
+---
+
+### <a id="t-42"></a>T-42 · Nắn quỹ đạo GPS về đường thật (map matching) `P2` `[Geo]`
+
+OSRM đã có endpoint `/match` — **chưa ai gọi**, hiện mới dùng `/route` và `/table`. Một lần làm
+phục vụ ba việc: tính cước theo quãng đường thật thay vì đường chim bay, phát hiện lệch tuyến cho
+[an toàn](godrive-pro-TODO.md#p17-safety-platform), và đo chất lượng đường để nuôi ngược lại ETA.
+
+- [ ] Gọi `/match` cho quỹ đạo chuyến đã hoàn tất
+- [ ] So quãng đường nắn được với quãng đường đã tính cước, ghi độ lệch
+- [ ] **Chưa đổi cách tính cước** cho tới khi đo đủ — đổi cách tính tiền dựa trên dữ liệu chưa kiểm
+      chứng là cách nhanh nhất để tính sai tiền của tài xế
+- [ ] Thống kê thời gian đi thật theo đoạn đường, làm đầu vào cho [P3.2](godrive-pro-TODO.md#p32-eta-intelligence)
+
+Cần dữ liệu chuyến thật mới có ý nghĩa — xếp sau pilot.
+
+---
+
 ## Bảng tra nhanh gap → việc
 
 > ✅ = đã đóng và có test hồi quy.
