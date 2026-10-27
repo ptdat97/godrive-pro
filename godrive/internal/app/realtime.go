@@ -38,11 +38,12 @@ const (
 // trọn đối tượng chứ không chỉ "có gì đó vừa đổi", để thiết bị không phải gọi
 // HTTP ngay sau mỗi tin — chính là thứ chiều xuống sinh ra để bỏ đi.
 type PushMessage struct {
-	Type   string            `json:"type"` // offer | trip | driver_loc
-	Offer  *matching.Offer   `json:"offer,omitempty"`
-	Trip   *trip.Trip        `json:"trip,omitempty"`
-	From   trip.Status       `json:"from,omitempty"`
-	Driver *DriverLocPayload `json:"driver,omitempty"`
+	Type      string                   `json:"type"` // offer | offer_withdrawn | trip | driver_loc
+	Offer     *matching.OfferView      `json:"offer,omitempty"`
+	Withdrawn *matching.OfferWithdrawn `json:"withdrawn,omitempty"`
+	Trip      *trip.Trip               `json:"trip,omitempty"`
+	From      trip.Status              `json:"from,omitempty"`
+	Driver    *DriverLocPayload        `json:"driver,omitempty"`
 }
 
 // DriverLocPayload là vị trí tài xế gửi tới khách. Cố ý KHÔNG chứa pin, độ
@@ -70,6 +71,7 @@ func (a *App) startPushConsumers() {
 		return
 	}
 	a.Bus.Subscribe(eventbus.TopicOfferCreated, "push-offer", a.pushOffer)
+	a.Bus.Subscribe(eventbus.TopicOfferWithdrawn, "push-offer-withdrawn", a.pushOfferWithdrawn)
 	a.Bus.Subscribe(eventbus.TopicTripStatusChanged, "push-trip", a.pushTripStatus)
 	a.Location.UseMovementSink(movementPusher{a})
 }
@@ -90,14 +92,33 @@ func (a *App) pushOffer(ctx context.Context, e eventbus.Event) error {
 		a.Metrics.pushes.Inc(metrics.Labels{"kind": "offer", "result": "stale"})
 		return nil
 	}
-	err := a.push(ctx, fmt.Sprintf(mqttauth.TopicDriverOffer, o.DriverID), qosReliable,
-		PushMessage{Type: "offer", Offer: &o})
+	v, err := a.Matcher.View(ctx, o)
+	if err != nil {
+		return err
+	}
+	err = a.push(ctx, fmt.Sprintf(mqttauth.TopicDriverOffer, o.DriverID), qosReliable,
+		PushMessage{Type: "offer", Offer: &v})
 	if err == nil {
 		// Độ trễ tính từ lúc tạo lời mời tới lúc broker nhận tin — phần của máy
 		// chủ trong mục tiêu "lời mời tới tay tài xế p95 < 1 giây".
 		a.Metrics.offerPushDelay.Observe(a.Clock.Now().Sub(o.CreatedAt).Seconds(), nil)
 	}
 	return a.countPush("offer", err)
+}
+
+// pushOfferWithdrawn báo tài xế rằng lời mời trên màn hình đã mất hiệu lực.
+// Đi cùng topic với lời mời: với app, đây là "xoá lời mời đó khỏi màn hình".
+func (a *App) pushOfferWithdrawn(ctx context.Context, e eventbus.Event) error {
+	var w matching.OfferWithdrawn
+	if err := json.Unmarshal(e.Payload, &w); err != nil {
+		return err
+	}
+	if w.DriverID == "" {
+		return nil
+	}
+	err := a.push(ctx, fmt.Sprintf(mqttauth.TopicDriverOffer, w.DriverID), qosReliable,
+		PushMessage{Type: "offer_withdrawn", Withdrawn: &w})
+	return a.countPush("offer_withdrawn", err)
 }
 
 // pushTripStatus đẩy lần đổi trạng thái chuyến tới cả khách lẫn tài xế.

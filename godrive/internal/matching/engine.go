@@ -219,7 +219,7 @@ func (e *Engine) Accept(ctx context.Context, offerID, driverID string) (*trip.Tr
 	}
 
 	_ = e.store.UpdateStatus(ctx, offerID, OfferAccepted)
-	_ = e.store.ExpireOffers(ctx, o.TripID, offerID)
+	e.withdraw(ctx, o.TripID, offerID, OfferLost, WithdrawTaken)
 	_ = e.bus.Publish(ctx, eventbus.TopicOfferAccepted, map[string]string{
 		"trip_id": o.TripID, "driver_id": driverID, "offer_id": offerID,
 	})
@@ -239,6 +239,59 @@ func (e *Engine) Reject(ctx context.Context, offerID, driverID string) error {
 
 func (e *Engine) PendingOffers(ctx context.Context, driverID string) ([]Offer, error) {
 	return e.store.PendingForDriver(ctx, driverID)
+}
+
+// PendingOfferViews như PendingOffers nhưng kèm thông tin chuyến — đây là thứ
+// app tài xế hiển thị.
+func (e *Engine) PendingOfferViews(ctx context.Context, driverID string) ([]OfferView, error) {
+	offers, err := e.store.PendingForDriver(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OfferView, 0, len(offers))
+	for _, o := range offers {
+		v, err := e.View(ctx, o)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// View ghép lời mời với chuyến của nó.
+//
+// Ghép lúc đọc chứ không chép vào lời mời lúc tạo: lời mời nằm ở Redis hoặc
+// Postgres tuỳ cấu hình, và bảng offers không có cột nào cho điểm đón hay số
+// tiền. Chép vào nghĩa là thêm cột cho cả hai kho và giữ chúng khớp với chuyến.
+func (e *Engine) View(ctx context.Context, o Offer) (OfferView, error) {
+	t, err := e.trips.Get(ctx, o.TripID)
+	if err != nil {
+		return OfferView{}, err
+	}
+	return OfferView{
+		Offer: o, Pickup: t.Pickup, Dropoff: t.Dropoff, VehicleType: t.VehicleType,
+		PaymentMethod: t.PaymentMethod, DriverEarn: t.DriverEarn,
+	}, nil
+}
+
+// WithdrawOffers thu hồi mọi lời mời còn chờ của một chuyến vừa bị huỷ.
+func (e *Engine) WithdrawOffers(ctx context.Context, tripID string) error {
+	return e.withdraw(ctx, tripID, "", OfferExpired, WithdrawTripCancelled)
+}
+
+// withdraw đóng các lời mời còn chờ và báo cho từng tài xế.
+//
+// Không báo thì tài xế vẫn thấy lời mời trên màn hình tới hết 15 giây, bấm
+// nhận rồi mới biết là đã mất — đúng lúc họ có thể đang tấp xe vào lề để bấm.
+func (e *Engine) withdraw(ctx context.Context, tripID, except string, to OfferStatus, reason string) error {
+	gone, err := e.store.ExpireOffers(ctx, tripID, except, to)
+	for _, o := range gone {
+		_ = e.bus.Publish(ctx, eventbus.TopicOfferWithdrawn, OfferWithdrawn{
+			OfferID: o.ID, TripID: o.TripID, DriverID: o.DriverID, Reason: reason,
+		})
+	}
+	return err
 }
 
 func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64, cfg Config) ([]Candidate, error) {

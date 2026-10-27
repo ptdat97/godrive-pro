@@ -28,6 +28,9 @@ func (a *App) StartWorkers(ctx context.Context) {
 	a.Bus.Subscribe(eventbus.TopicTripAssigned, "driver-status", a.syncDriverStatus)
 	a.Bus.Subscribe(eventbus.TopicTripStarted, "driver-status", a.syncDriverStatus)
 	a.Bus.Subscribe(eventbus.TopicTripCancelled, "cancellation", a.onTripCancelled)
+	// Khách huỷ lúc đang tìm tài xế: lời mời đã gửi phải bị thu hồi, nếu không
+	// tài xế vẫn thấy và bấm nhận một chuyến không còn tồn tại.
+	a.Bus.Subscribe(eventbus.TopicTripCancelled, "offer-withdraw", a.onTripCancelledWithdraw)
 	// Đồng bộ cột cache drivers.wallet_balance từ sổ cái.
 	a.Bus.Subscribe(eventbus.TopicWalletBalanceChanged, "wallet-cache", a.onWalletBalanceChanged)
 
@@ -226,6 +229,20 @@ func (a *App) onTripCancelled(ctx context.Context, e eventbus.Event) error {
 		}
 	}
 	return a.syncDriverStatus(ctx, e)
+}
+
+// onTripCancelledWithdraw thu hồi lời mời còn chờ của chuyến vừa huỷ.
+func (a *App) onTripCancelledWithdraw(ctx context.Context, e eventbus.Event) error {
+	var p struct {
+		TripID string `json:"trip_id"`
+	}
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return err
+	}
+	if p.TripID == "" {
+		return nil
+	}
+	return a.Matcher.WithdrawOffers(ctx, p.TripID)
 }
 
 // onWalletBalanceChanged đồng bộ cột cache drivers.wallet_balance.

@@ -264,13 +264,16 @@ Máy chủ đẩy tin qua chính broker mà app tài xế đang gửi vị trí.
 | Topic | Chiều | QoS | `type` | Khi nào |
 |---|---|---|---|---|
 | `drv/{id}/offer` | xuống | 1 | `offer` | dispatcher vừa chào tài xế này |
+| `drv/{id}/offer` | xuống | 1 | `offer_withdrawn` | lời mời đang hiện bị thu hồi: tài xế khác đã nhận (`taken`) hoặc khách huỷ (`trip_cancelled`) — app xoá nó khỏi màn hình |
 | `drv/{id}/trip` | xuống | 1 | `trip` | chuyến của tài xế đổi trạng thái |
 | `rdr/{id}/trip` | xuống | 1 | `trip` | chuyến của khách đổi trạng thái — **mọi** bước, kể cả ARRIVED, PAID, EXPIRED |
 | `rdr/{id}/driver_loc` | xuống | **0** | `driver_loc` | mỗi ping hợp lệ của tài xế đang ASSIGNED/ARRIVED/IN_PROGRESS chuyến này |
 
 ```jsonc
 // Mọi tin cùng một phong bì; chỉ trường ứng với `type` có mặt
-{"type":"offer","offer":{ /* giống phần tử của GET /v1/offers */ }}
+{"type":"offer","offer":{ /* giống phần tử của GET /v1/offers: các trường của lời mời
+                          + pickup, dropoff, vehicle_type, payment_method, driver_earn */ }}
+{"type":"offer_withdrawn","withdrawn":{"offer_id":"ofr_…","trip_id":"trp_…","driver_id":"drv_…","reason":"taken"}}
 {"type":"trip","from":"ASSIGNED","trip":{ /* giống GET /v1/trips/{id} */ }}
 {"type":"driver_loc","driver":{"trip_id":"trp_…","driver_id":"drv_…","lat":10.77,"lng":106.69,"bearing_deg":45,"at":"…"}}
 ```

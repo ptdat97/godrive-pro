@@ -151,11 +151,12 @@ func (s *RedisStore) PendingForDriver(ctx context.Context, driverID string) ([]O
 	return out, nil
 }
 
-func (s *RedisStore) ExpireOffers(ctx context.Context, tripID, except string) error {
+func (s *RedisStore) ExpireOffers(ctx context.Context, tripID, except string, to OfferStatus) ([]Offer, error) {
 	ids, err := s.rdb.SMembers(ctx, s.tripKey(tripID)).Result()
 	if err != nil {
-		return errs.Wrap(errs.KindInternal, "redis_error", "redis", err)
+		return nil, errs.Wrap(errs.KindInternal, "redis_error", "redis", err)
 	}
+	var out []Offer
 	for _, id := range ids {
 		if id == except {
 			continue
@@ -164,11 +165,13 @@ func (s *RedisStore) ExpireOffers(ctx context.Context, tripID, except string) er
 		if err != nil || o.Status != OfferPending {
 			continue
 		}
-		if err := s.UpdateStatus(ctx, id, OfferLost); err != nil {
-			return err
+		if err := s.UpdateStatus(ctx, id, to); err != nil {
+			return out, err
 		}
+		o.Status = to
+		out = append(out, o)
 	}
-	return nil
+	return out, nil
 }
 
 func toAny(ss []string) []any {

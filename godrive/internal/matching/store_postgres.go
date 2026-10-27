@@ -139,12 +139,22 @@ func (s *PostgresStore) PendingForDriver(ctx context.Context, driverID string) (
 	return out, rows.Err()
 }
 
-func (s *PostgresStore) ExpireOffers(ctx context.Context, tripID, except string) error {
-	_, err := s.db.ExecContext(ctx, `
-        UPDATE offers SET status='LOST'
-        WHERE trip_id=$1 AND id <> $2 AND status='PENDING'`, tripID, except)
+func (s *PostgresStore) ExpireOffers(ctx context.Context, tripID, except string, to OfferStatus) ([]Offer, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        UPDATE offers SET status=$3
+        WHERE trip_id=$1 AND id <> $2 AND status='PENDING'
+        RETURNING `+offerCols, tripID, except, to)
 	if err != nil {
-		return errs.Wrap(errs.KindInternal, "db_error", "db", err)
+		return nil, errs.Wrap(errs.KindInternal, "db_error", "db", err)
 	}
-	return nil
+	defer func() { _ = rows.Close() }()
+	var out []Offer
+	for rows.Next() {
+		o, err := scanOffer(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }

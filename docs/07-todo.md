@@ -577,10 +577,13 @@ Việc này phải xong **trước khi viết app**, vì nó quyết định ki�
 - [x] Số liệu `godrive_offer_push_delay_seconds`, `godrive_push_total{kind,result}`
 - [ ] **Verify chưa chạy:** p95 < 1s với 1.000 tài xế online mô phỏng — cần bộ test tải của [T-35](#t-35).
       Số liệu đo đã có sẵn để T-35 đọc
-- [ ] Tin "lời mời đã mất" cho các tài xế khác khi một người đã nhận — hiện họ chỉ biết khi bấm
-      nhận và nhận `trip_taken`
-- [ ] Lời mời đẩy đi chưa mang điểm đón/điểm đến/thu nhập — giống `GET /v1/offers`. App tài xế
-      ([T-39](#t-39)) cần những trường này để quyết định trong 15 giây
+- [x] Tin `offer_withdrawn` cho các tài xế khác khi một người đã nhận (`taken`), và khi khách huỷ lúc
+      đang tìm tài xế (`trip_cancelled`). Trường hợp sau trước đây còn tệ hơn: lời mời **vẫn nằm ở
+      trạng thái chờ** trong kho tới hết 15 giây. `ExpireOffers` giờ trả về đúng những lời mời vừa bị
+      thu hồi ở cả ba kho (bộ nhớ, Redis, Postgres `UPDATE … RETURNING`)
+- [x] Lời mời — cả tin đẩy lẫn `GET /v1/offers` — mang điểm đón, điểm đến, loại xe, hình thức trả
+      tiền và thu nhập tài xế (`OfferView`). Ghép lúc đọc chứ không chép vào bảng `offers`.
+      Verify: `TestPushOnlyReachesOfferedDrivers` · `TestRiderCancelWithdrawsPendingOffers`, kiểm ngược
 
 **Verify** — `TestPushFollowsTripLifecycle` · `TestPushOnlyReachesOfferedDrivers` ·
 `TestExpiredOfferIsNotPushed` · `TestTripPushFailureOnOneSideStillReachesOther` ·

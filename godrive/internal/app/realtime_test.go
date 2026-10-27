@@ -123,6 +123,12 @@ func TestPushFollowsTripLifecycle(t *testing.T) {
 	if pushed.Offer == nil || pushed.Offer.TripID != tr.ID || pushed.Offer.DriverID != d.ID {
 		t.Fatalf("lời mời đẩy đi sai nội dung: %+v", pushed.Offer)
 	}
+	// Đủ để quyết định trong 15 giây mà không phải gọi thêm API nào.
+	if pushed.Offer.Pickup.Point != tr.Pickup.Point || pushed.Offer.Dropoff.Point != tr.Dropoff.Point ||
+		pushed.Offer.DriverEarn != tr.DriverEarn || pushed.Offer.DriverEarn <= 0 ||
+		pushed.Offer.PaymentMethod != tr.PaymentMethod {
+		t.Fatalf("lời mời phải mang điểm đón/đến, thu nhập và hình thức trả tiền của chuyến: %+v", pushed.Offer)
+	}
 	// Tin đẩy và GET /v1/offers phải nói cùng một điều — đường dự phòng không
 	// được lệch với đường chính.
 	pending, err := a.Matcher.PendingOffers(ctx, d.ID)
@@ -220,6 +226,68 @@ func TestPushOnlyReachesOfferedDrivers(t *testing.T) {
 	})
 	if got := dl.on("drv/" + d2.ID + "/trip"); len(got) != 0 {
 		t.Fatalf("tài xế không được ghép không được nhận tin chuyến: %+v", got)
+	}
+
+	// Người thua phải được báo ngay, không đợi tới lúc bấm nhận.
+	waitFor(t, "tài xế 2 được báo lời mời đã mất", func() bool {
+		return withdrawnOf(dl, d2.ID, o2.ID) != nil
+	})
+	if w := withdrawnOf(dl, d2.ID, o2.ID); w.Reason != matching.WithdrawTaken {
+		t.Fatalf("lý do thu hồi phải là %q, được %q", matching.WithdrawTaken, w.Reason)
+	}
+	if withdrawnOf(dl, d1.ID, o1.ID) != nil {
+		t.Fatal("người thắng không được nhận tin thu hồi lời mời của chính mình")
+	}
+}
+
+// withdrawnOf tìm tin thu hồi lời mời offerID đã đẩy tới tài xế driverID.
+func withdrawnOf(dl *fakeDownlink, driverID, offerID string) *matching.OfferWithdrawn {
+	for _, m := range dl.on("drv/" + driverID + "/offer") {
+		if m.Type == "offer_withdrawn" && m.Withdrawn != nil && m.Withdrawn.OfferID == offerID {
+			return m.Withdrawn
+		}
+	}
+	return nil
+}
+
+// Khách huỷ lúc đang tìm tài xế: lời mời đã gửi phải bị thu hồi ở cả kho lẫn
+// trên màn hình tài xế — trước đây nó sống tiếp tới hết 15 giây.
+func TestRiderCancelWithdrawsPendingOffers(t *testing.T) {
+	ctx := context.Background()
+	a, dl := pushApp(t)
+	riderID := login(t, a, "0901234567", authn.RoleRider)
+	d := seedDriver(t, a, "0912345678", "Tài", "59X1-123.45")
+	tr := seedTrip(t, a, riderID)
+
+	waitFor(t, "lời mời", func() bool { return len(dl.on("drv/"+d.ID+"/offer")) > 0 })
+	o := dl.on("drv/" + d.ID + "/offer")[0].Offer
+
+	// GET /v1/offers trả cùng dạng với tin đẩy, có điểm đón.
+	tok, _ := a.Issuer.Issue(d.AccountID, authn.RoleDriver, "may-test", a.Clock.Now().UTC())
+	req := httptest.NewRequest(http.MethodGet, "/v1/offers", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	a.Router().ServeHTTP(rec, req)
+	var body struct {
+		Offers []matching.OfferView `json:"offers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Offers) != 1 ||
+		body.Offers[0].Pickup.Point != tr.Pickup.Point {
+		t.Fatalf("GET /v1/offers phải trả lời mời kèm điểm đón: %d %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := a.Trips.Cancel(ctx, trip.CancelInput{TripID: tr.ID, By: trip.CancelByRider, Actor: riderID}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "tài xế được báo lời mời bị thu hồi", func() bool { return withdrawnOf(dl, d.ID, o.ID) != nil })
+	if w := withdrawnOf(dl, d.ID, o.ID); w.Reason != matching.WithdrawTripCancelled {
+		t.Fatalf("lý do phải là %q, được %q", matching.WithdrawTripCancelled, w.Reason)
+	}
+	if pending, _ := a.Matcher.PendingOffers(ctx, d.ID); len(pending) != 0 {
+		t.Fatalf("lời mời của chuyến đã huỷ không được còn chờ: %+v", pending)
+	}
+	if _, err := a.Matcher.Accept(ctx, o.ID, d.ID); err == nil {
+		t.Fatal("nhận lời mời của chuyến đã huỷ phải bị từ chối")
 	}
 }
 

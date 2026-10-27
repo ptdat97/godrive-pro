@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/example/godrive/internal/driver"
+	"github.com/example/godrive/internal/trip"
 	"github.com/example/godrive/pkg/geo"
 	"github.com/example/godrive/pkg/money"
 )
@@ -40,6 +41,32 @@ type Offer struct {
 	ExpiresAt time.Time   `json:"expires_at"`
 }
 
+// OfferView là lời mời kèm đủ thông tin để tài xế quyết định trong 15 giây:
+// đón ở đâu, đi đâu, được bao nhiêu, khách trả tiền mặt hay qua ví. JSON là
+// tập cha của Offer, nên app đọc Offer cũ vẫn đọc được.
+type OfferView struct {
+	Offer
+	Pickup        trip.Place         `json:"pickup"`
+	Dropoff       trip.Place         `json:"dropoff"`
+	VehicleType   driver.VehicleType `json:"vehicle_type"`
+	PaymentMethod trip.PaymentMethod `json:"payment_method"`
+	DriverEarn    money.VND          `json:"driver_earn"`
+}
+
+// Lý do thu hồi lời mời.
+const (
+	WithdrawTaken         = "taken"          // tài xế khác đã nhận
+	WithdrawTripCancelled = "trip_cancelled" // khách huỷ khi đang tìm tài xế
+)
+
+// OfferWithdrawn là payload của sự kiện offer.withdrawn.
+type OfferWithdrawn struct {
+	OfferID  string `json:"offer_id"`
+	TripID   string `json:"trip_id"`
+	DriverID string `json:"driver_id"`
+	Reason   string `json:"reason"`
+}
+
 type Candidate struct {
 	DriverID    string
 	Point       geo.Point
@@ -62,7 +89,10 @@ type Store interface {
 	ClaimTrip(ctx context.Context, tripID, driverID string, ttl time.Duration) (bool, error)
 	UpdateStatus(ctx context.Context, offerID string, s OfferStatus) error
 	PendingForDriver(ctx context.Context, driverID string) ([]Offer, error)
-	ExpireOffers(ctx context.Context, tripID string, except string) error
+	// ExpireOffers chuyển mọi lời mời CÒN CHỜ của chuyến (trừ except) sang
+	// trạng thái to, và trả về đúng những lời mời vừa bị chuyển — để báo cho
+	// từng tài xế đó biết thay vì để họ bấm nhận rồi mới hay.
+	ExpireOffers(ctx context.Context, tripID, except string, to OfferStatus) ([]Offer, error)
 }
 
 // Config điều chỉnh hành vi ghép chuyến.

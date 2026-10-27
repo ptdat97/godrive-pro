@@ -87,14 +87,16 @@ func (m *MemoryStore) PendingForDriver(_ context.Context, driverID string) ([]Of
 	return out, nil
 }
 
-func (m *MemoryStore) ExpireOffers(_ context.Context, tripID, except string) error {
+func (m *MemoryStore) ExpireOffers(_ context.Context, tripID, except string, to OfferStatus) ([]Offer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var out []Offer
 	for k, o := range m.offers {
 		if o.TripID == tripID && o.ID != except && o.Status == OfferPending {
-			o.Status = OfferLost
+			o.Status = to
 			m.offers[k] = o
+			out = append(out, o)
 		}
 	}
-	return nil
+	return out, nil
 }

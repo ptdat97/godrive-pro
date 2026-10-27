@@ -30,7 +30,7 @@ func (h *Handler) pending(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	offers, err := h.eng.PendingOffers(r.Context(), did)
+	offers, err := h.eng.PendingOfferViews(r.Context(), did)
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return

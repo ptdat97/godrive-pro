@@ -31,7 +31,10 @@ const (
 	TopicDriverOffline     = "driver.offline"
 	TopicOfferCreated      = "offer.created"
 	TopicOfferAccepted     = "offer.accepted"
-	TopicPaymentSettled    = "payment.settled"
+	// TopicOfferWithdrawn: lời mời còn chờ bị thu hồi vì người khác đã nhận
+	// hoặc khách đã huỷ. Một sự kiện cho mỗi lời mời.
+	TopicOfferWithdrawn = "offer.withdrawn"
+	TopicPaymentSettled = "payment.settled"
 	// TopicWalletBalanceChanged phát mỗi khi số dư một tài khoản trong sổ cái
 	// đổi. Dùng để đồng bộ cột cache drivers.wallet_balance.
 	TopicWalletBalanceChanged = "wallet.balance_changed"
