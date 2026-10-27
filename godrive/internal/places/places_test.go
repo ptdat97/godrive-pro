@@ -154,7 +154,9 @@ func TestProviderErrorsAreNotCached(t *testing.T) {
 
 type brokenCache struct{}
 
-func (brokenCache) Get(context.Context, string) ([]byte, bool, error) { return nil, false, errors.New("redis chết") }
+func (brokenCache) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, errors.New("redis chết")
+}
 func (brokenCache) Set(context.Context, string, []byte, time.Duration) error {
 	return errors.New("redis chết")
 }
