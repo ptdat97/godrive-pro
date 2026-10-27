@@ -450,6 +450,8 @@ go test ./internal/payment/... -run TestWebhookRejectsBadSignature
 - [ ] `driver_status_history` cho đối soát tranh chấp
 - [ ] Chính sách lưu trữ theo [02 §2.7](02-mo-hinh-du-lieu.md) + job xoá dữ liệu quá hạn (NĐ 13/2023)
 
+> **Chốt 2026-10-27:** eKYC **tạm duyệt tay** — vận hành xem giấy tờ rồi bấm duyệt như hiện tại.
+> Chưa ký với nhà cung cấp eKYC nào; xem lại khi số hồ sơ chờ duyệt mỗi ngày vượt sức đội vận hành.
 ---
 
 ### <a id="t-26"></a>T-26 · ✅ Phân trang thật cho admin `[G-19]` `P2`
@@ -665,7 +667,9 @@ không** chứ không tin mã trả về của lệnh publish. Cộng 13 test đ
 Khung `notification.Pusher` có từ đầu nhưng **chưa ai gọi**. Không có push thì tài xế phải mở app
 mới biết có chuyến, và khách không được báo khi tài xế tới nơi.
 
-- [ ] Nối FCM (Android) và APNs (iOS) — *cần credential Google/Apple*
+- [x] ~~Chọn cách gửi~~ → **FCM cho cả Android và iOS** (chốt 2026-10-27): một tích hợp, FCM tự
+      chuyển sang APNs khi tải khoá APNs lên Firebase
+- [ ] Nối FCM — *cần project Firebase + service account JSON, và khoá APNs tải lên Firebase*
 - [ ] Bảng `device_tokens`: đăng ký, làm mới, thu hồi khi đăng xuất
 - [ ] Mẫu thông báo: có lời mời · tài xế đã tới · chuyến hoàn tất · thanh toán · kết quả duyệt hồ sơ
 - [ ] Thử lại khi gửi lỗi, dọn token chết
@@ -720,7 +724,9 @@ Mọi ngưỡng hiệu năng trong tài liệu (`API p95 < 100ms`, `offer delive
 
 Đường tiền vào đã chắc, **đường tiền ra chưa đủ**:
 
-- [ ] Hoàn tiền (huỷ sau khi đã thu, khiếu nại được duyệt) — bút toán đảo, không sửa bút toán cũ
+- [ ] Hoàn tiền (huỷ sau khi đã thu, khiếu nại được duyệt) — bút toán đảo, không sửa bút toán cũ.
+      **Chốt 2026-10-27:** hoàn **về ví GoDrive** của khách, **hai cấp duyệt** — dưới ngưỡng (gợi ý
+      50.000đ, chỉnh được) một vận hành tự duyệt; trên ngưỡng cần người thứ hai duyệt
 - [ ] Chốt sổ cuối ngày: tổng thu, chiết khấu, thuế, phải trả tài xế
 - [ ] Đối soát tự động với sao kê cổng thanh toán, nêu ra dòng lệch
 - [ ] Báo cáo kiểm toán tài chính xuất được cho kế toán
@@ -763,7 +769,8 @@ Khách phải nhập được *"Chợ Bến Thành"* chứ không phải toạ �
 nối — [pricing/domain.go](../godrive/internal/pricing/domain.go) mới chỉ ghi chú dự định dùng
 Goong/VietMap.
 
-- [ ] Chọn nhà cung cấp (Goong · VietMap · Mapbox) — *cần quyết định + credential*
+- [x] ~~Chọn nhà cung cấp~~ → **Goong** (chốt 2026-10-27): dữ liệu địa chỉ/hẻm Việt Nam tốt, có
+      autocomplete + geocoding, rẻ hơn Google. *Còn cần API key* từ goong.io
 - [ ] Tìm địa điểm theo từ khoá, ưu tiên gần vị trí hiện tại
 - [ ] Toạ độ → địa chỉ, để hiện tên điểm đón
 - [ ] Cache kết quả, vì đây là API tính tiền theo lượt gọi
