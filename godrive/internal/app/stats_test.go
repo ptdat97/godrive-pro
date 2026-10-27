@@ -103,6 +103,54 @@ func TestPoorAcceptanceRateSinksDriverInRanking(t *testing.T) {
 	}
 }
 
+// T-34: tài xế hay huỷ chuyến SAU KHI nhận phải tụt hạng — nhưng chỉ khi vận
+// hành đã bật trọng số. Mặc định 0 không được đổi thứ hạng của ai.
+func TestHighCancelRateSinksDriverInRanking(t *testing.T) {
+	ctx := context.Background()
+	a := newTestApp(t)
+	riderID := login(t, a, "0901234567", authn.RoleRider)
+
+	// Cùng bố cục với bài kiểm tỉ lệ nhận: người hay huỷ ở gần, người đáng tin ở xa.
+	flaky := seedDriver(t, a, "0912345671", "Hay huỷ", "59X1-111.11")
+	solid := seedDriver(t, a, "0912345672", "Đáng tin", "59X1-222.22")
+	near := geo.Point{Lat: pickup.Lat + 0.0018, Lng: pickup.Lng} // ~200m
+	far := geo.Point{Lat: pickup.Lat + 0.0036, Lng: pickup.Lng}  // ~400m
+	for id, p := range map[string]geo.Point{flaky.ID: near, solid.ID: far} {
+		if err := a.Location.Ingest(ctx, locationPingAt(id, p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Cùng số chuyến đã nhận (20), chỉ khác ở việc huỷ. Tỉ lệ nhận bằng nhau
+	// để thứ được đo là tỉ lệ huỷ chứ không gì khác.
+	if err := a.Drivers.ApplyStats(ctx, flaky.ID, driver.StatsDelta{TripsCompleted: 10, TripsCancelled: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Drivers.ApplyStats(ctx, solid.ID, driver.StatsDelta{TripsCompleted: 20}); err != nil {
+		t.Fatal(err)
+	}
+	fd, _ := a.Drivers.Get(ctx, flaky.ID)
+	sd, _ := a.Drivers.Get(ctx, solid.ID)
+	t.Logf("cancel: hay-huỷ=%.3f  đáng-tin=%.3f", fd.CancelRate(), sd.CancelRate())
+
+	// Mặc định tắt: người gần vẫn đứng đầu, thu nhập không ai bị đổi ngầm.
+	if first := rankFirst(t, a, riderID); first != flaky.ID {
+		t.Fatalf("trọng số huỷ mặc định 0 không được đổi thứ hạng, được %s", first)
+	}
+	// Bật lên: tỉ lệ huỷ 1/3 × 300 = 100 điểm, hơn ~54 giây chênh ETA.
+	if first := rankFirstWith(t, a, riderID, func(c *matching.Config) { c.WeightCancel = 300 }); first != solid.ID {
+		t.Fatalf("bật trọng số huỷ thì người đáng tin (dù xa hơn) phải đứng đầu, được %s", first)
+	}
+}
+
+// Làm mượt Bayes: tài xế mới huỷ đúng một chuyến đầu tiên không bị coi là
+// "huỷ 100%" — nếu không, một lần lỡ tay đầu đời là tụt hạng vĩnh viễn.
+func TestFirstCancelDoesNotSinkNewDriver(t *testing.T) {
+	s := driver.Stats{TripsCancelled: 1}
+	if r := s.CancelRate(); r > 0.1 {
+		t.Fatalf("huỷ 1 chuyến đầu tiên phải cho tỉ lệ thấp sau làm mượt, được %.3f", r)
+	}
+}
+
 // Điểm đánh giá của khách phải thật sự thay đổi chỉ số tài xế.
 func TestRatingFlowUpdatesDriverStats(t *testing.T) {
 	ctx := context.Background()
@@ -265,10 +313,19 @@ func TestSurgeRisesWithRealDemand(t *testing.T) {
 // công thức trong test sẽ vẫn xanh khi công thức thật đổi, đúng lúc cần nó đỏ.
 func rankFirst(t *testing.T, a *App, riderID string) string {
 	t.Helper()
+	return rankFirstWith(t, a, riderID, nil)
+}
+
+// rankFirstWith như rankFirst nhưng cho chỉnh cấu hình chấm điểm trước khi chạy.
+func rankFirstWith(t *testing.T, a *App, riderID string, tweak func(*matching.Config)) string {
+	t.Helper()
 	ctx := context.Background()
 	tr := seedTrip(t, a, riderID)
 
 	cfg := matching.DefaultConfig()
+	if tweak != nil {
+		tweak(&cfg)
+	}
 	cfg.BatchSize = 1
 	cfg.OfferTTL = time.Minute
 	m := matching.NewEngine(cfg, a.Location, a.Drivers, a.Trips,

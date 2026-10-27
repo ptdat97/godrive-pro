@@ -644,20 +644,21 @@ mới biết có chuyến, và khách không được báo khi tài xế tới n
 
 ---
 
-### <a id="t-34"></a>T-34 · Tỉ lệ huỷ chuyến chưa vào hàm chấm điểm `P1`
+### <a id="t-34"></a>T-34 · ✅ Tỉ lệ huỷ chuyến vào hàm chấm điểm `P1`
 
-Migration 0005 thêm cột `trips_cancelled` và có code cộng dồn, nhưng
-[scoring.go](../godrive/internal/matching/scoring.go) chỉ dùng ETA, đánh giá, tỉ lệ nhận, thời gian
-chờ và hướng xe. **Không ai đọc `trips_cancelled`.**
+Migration 0005 thêm cột `trips_cancelled` và có code cộng dồn, `Stats.CancelRate()` cũng đã có — nhưng
+[scoring.go](../godrive/internal/matching/scoring.go) **không ai đọc nó**. Tài xế nhận chuyến rồi huỷ
+được xếp hạng ngang tài xế không bao giờ huỷ.
 
-Tài xế nhận chuyến rồi huỷ đang được xếp hạng ngang tài xế không bao giờ huỷ — mà huỷ sau khi ghép
-còn hại hơn từ chối ngay, vì khách đã chờ xong mới phải tìm lại từ đầu.
+- [x] `WeightCancel` trong `matching.Config` và ô `weight_cancel` trong nhóm cấu hình `matching`
+      (0..1000, biểu mẫu quản trị tự có vì lược đồ do backend phát ra)
+- [x] Làm mượt Bayes dùng lại `CancelRate()` có sẵn (tiền nghiệm 10 chuyến): huỷ 1 chuyến đầu đời ≈ 9%, không phải 100%
+- [x] Mặc định **0** — đổi trọng số là đổi thu nhập tài xế; vận hành bật khi có dữ liệu thật.
+      Gợi ý trong biểu mẫu: 300 nghĩa là tỉ lệ huỷ 10% ≈ tới đón chậm 30 giây
 
-- [ ] Thêm `WeightCancel` vào `matching.Config` và vào nhóm cấu hình `matching`
-- [ ] Làm mượt Bayes như `Acceptance` để tài xế mới không bị phạt oan
-- [ ] Đặt mặc định **0** và bật sau khi có dữ liệu — đổi trọng số là đổi thu nhập tài xế
-
-**Verify** — test kiểu `TestPoorAcceptanceRateSinksDriverInRanking` cho tỉ lệ huỷ.
+**Verify** — `TestHighCancelRateSinksDriverInRanking` (mặc định 0 **không** đổi thứ hạng; bật 300 thì
+người đáng tin ở xa vượt người hay huỷ ở gần) · `TestFirstCancelDoesNotSinkNewDriver`. Kiểm ngược:
+bỏ dòng chấm điểm → test đỏ.
 
 ---
 

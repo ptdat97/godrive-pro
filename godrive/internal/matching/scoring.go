@@ -15,6 +15,7 @@ func score(cfg Config, c Candidate, pickup geo.Point) float64 {
 	s := cfg.WeightETA * c.ETASec
 	s += cfg.WeightRating * (5.0 - c.Rating)
 	s += cfg.WeightAcceptance * (1.0 - c.Acceptance)
+	s += cfg.WeightCancel * c.CancelRate
 	s -= cfg.WeightIdle * c.IdleSeconds
 
 	// Xe đang chạy ngược hướng điểm đón phải quay đầu -> phạt theo góc lệch.

@@ -151,6 +151,9 @@ func SchemaFor(k Key) []Section {
 						"Càng chờ lâu càng được ưu tiên, để chia việc đều hơn."),
 					f("weight_heading", "Trọng số hướng xe", KindFloat, 0, 1000,
 						"Ưu tiên xe đang chạy về phía điểm đón."),
+					f("weight_cancel", "Trọng số tỉ lệ huỷ chuyến", KindFloat, 0, 1000,
+						"Phạt tài xế tự huỷ sau khi đã nhận. 0 = tắt. Ví dụ 300: tỉ lệ huỷ 10% "+
+							"tương đương tới đón chậm 30 giây."),
 				},
 			},
 		}

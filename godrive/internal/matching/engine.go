@@ -364,6 +364,9 @@ func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64, c
 			ETASec:      etas[i],
 			Rating:      c.drv.Rating(),
 			Acceptance:  c.drv.AcceptanceRate(),
+			// Đã làm mượt Bayes như tỉ lệ nhận: tài xế mới huỷ một chuyến đầu
+			// tiên không bị coi là "huỷ 100%".
+			CancelRate: c.drv.CancelRate(),
 			// Thời gian RẢNH thật, không phải độ cũ của ping vị trí.
 			// Dùng độ cũ của ping là vô tình thưởng cho tài xế mạng kém.
 			IdleSeconds: c.drv.IdleSeconds(now),

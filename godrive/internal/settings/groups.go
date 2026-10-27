@@ -256,6 +256,7 @@ type MatchingGroup struct {
 	WeightAcceptance   float64 `json:"weight_acceptance"`
 	WeightIdle         float64 `json:"weight_idle"`
 	WeightHeading      float64 `json:"weight_heading"`
+	WeightCancel       float64 `json:"weight_cancel"`
 }
 
 func DefaultMatching() MatchingGroup {
@@ -302,7 +303,7 @@ func (m MatchingGroup) Validate() error {
 	for name, w := range map[string]float64{
 		"Trọng số ETA": m.WeightETA, "Trọng số đánh giá": m.WeightRating,
 		"Trọng số tỉ lệ nhận": m.WeightAcceptance, "Trọng số thời gian chờ": m.WeightIdle,
-		"Trọng số hướng xe": m.WeightHeading,
+		"Trọng số hướng xe": m.WeightHeading, "Trọng số tỉ lệ huỷ": m.WeightCancel,
 	} {
 		if err := num(name, w, 0, 1000); err != nil {
 			return err

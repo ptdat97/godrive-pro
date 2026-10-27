@@ -76,6 +76,7 @@ type Candidate struct {
 	ETASec      float64
 	Rating      float64
 	Acceptance  float64
+	CancelRate  float64
 	IdleSeconds float64
 	Score       float64
 }
@@ -118,6 +119,12 @@ type Config struct {
 	WeightAcceptance float64
 	WeightIdle       float64
 	WeightHeading    float64
+	// WeightCancel phạt tài xế hay huỷ chuyến SAU KHI đã nhận — hại hơn từ chối
+	// ngay, vì khách đã chờ xong mới phải tìm lại từ đầu.
+	//
+	// Mặc định 0: đổi trọng số là đổi thu nhập tài xế. Bật từ bảng điều khiển
+	// khi đã có đủ dữ liệu huỷ thật để biết một con số hợp lý.
+	WeightCancel float64
 }
 
 func DefaultConfig() Config {

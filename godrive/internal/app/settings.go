@@ -70,7 +70,7 @@ func (a *App) wireSettings() {
 			DebtLimit:      money.VND(w.DebtLimitVND),
 			WeightETA:      g.WeightETA, WeightRating: g.WeightRating,
 			WeightAcceptance: g.WeightAcceptance, WeightIdle: g.WeightIdle,
-			WeightHeading: g.WeightHeading,
+			WeightHeading: g.WeightHeading, WeightCancel: g.WeightCancel,
 		}
 	})
 
