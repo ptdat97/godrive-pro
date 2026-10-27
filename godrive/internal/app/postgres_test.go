@@ -63,6 +63,50 @@ var appTables = []string{
 	"settings_history", "settings",
 }
 
+// truncateAll xoá sạch dữ liệu giữa các lần chạy.
+//
+// Bảng lịch sử có trigger chặn TRUNCATE (migration 0010) — chặn cả superuser.
+// session_replication_role=replica là lối thoát CÓ CHỦ ĐÍCH dành cho đúng việc
+// này; nó chỉ sống trong transaction nên không rò sang kết nối khác của pool.
+func truncateAll(t *testing.T, db *sql.DB) {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec("SET LOCAL session_replication_role = replica"); err != nil {
+		t.Fatalf("tắt trigger để dọn bảng: %v (user test phải là superuser)", err)
+	}
+	for _, tb := range appTables {
+		if _, err := tx.Exec("TRUNCATE TABLE " + tb + " CASCADE"); err != nil {
+			t.Fatalf("dọn bảng %s: %v", tb, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// asAppRole cho app trong test nối CSDL bằng role ứng dụng godrive_app thay vì
+// superuser của bộ test.
+//
+// Nhờ vậy CẢ bộ test tích hợp là bằng chứng rằng ứng dụng chạy được với quyền
+// đã bị cắt (migration 0010) — một đường code nào đó lén UPDATE sổ cái sẽ đỏ
+// ngay ở đây chứ không đợi tới production. pgx gửi tham số lạ trong chuỗi kết
+// nối như tham số khởi động, nên "role" có tác dụng như SET ROLE.
+func asAppRole(t *testing.T, dsn string) string {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("role", "godrive_app")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // mustDB mở một kết nối phụ tới CSDL test.
 func mustDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -91,18 +135,14 @@ func newPostgresApp(t *testing.T) (*App, *sql.DB) {
 	if err := db.Ping(); err != nil {
 		t.Fatalf("ping DB: %v", err)
 	}
-	for _, tb := range appTables {
-		if _, err := db.Exec("TRUNCATE TABLE " + tb + " CASCADE"); err != nil {
-			t.Fatalf("dọn bảng %s: %v", tb, err)
-		}
-	}
+	truncateAll(t, db)
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.Env = "test"
-	cfg.DatabaseURL = dsn
+	cfg.DatabaseURL = asAppRole(t, dsn)
 	cfg.DevAuth = true
 
 	a, err := New(cfg, logger.New("error", false))
@@ -366,7 +406,7 @@ func TestPostgresLedgerSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Env, cfg.DatabaseURL = "test", os.Getenv(testDBEnv)
+	cfg.Env, cfg.DatabaseURL = "test", asAppRole(t, os.Getenv(testDBEnv))
 	restarted, err := New(cfg, logger.New("error", false))
 	if err != nil {
 		t.Fatal(err)

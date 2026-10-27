@@ -70,6 +70,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `DATABASE_URL` rỗng | `DATABASE_URL bắt buộc ở production` |
 | `REDIS_URL` rỗng | `REDIS_URL bắt buộc ở production (nếu không sẽ chỉ chạy được 1 bản sao)` |
 | `DOCUMENTS_KEY` rỗng | `DOCUMENTS_KEY bắt buộc ở production (mã hoá CCCD/GPLX)` |
+| User CSDL sửa/xoá được bảng lịch sử, hoặc trigger chặn bị tắt | `bảng lịch sử KHÔNG được bảo vệ: …` — kiểm **lúc nối CSDL**, không phải lúc đọc cấu hình ([§8.3](#bảng-lịch-sử-chỉ-thêm-mới--bắt-buộc-khi-dựng-môi-trường)) |
 
 > Đây là chốt chặn tốt nhưng **chưa đủ**: `ADMIN_PHONES` rỗng ở production chỉ log warning
 > chứ không chặn khởi động. Cân nhắc nâng thành lỗi cứng.
@@ -83,7 +84,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 ```bash
 make up      # postgres+postgis, redis, nats, emqx (osrm cần profile "routing")
 export DATABASE_URL="postgres://godrive:godrive@localhost:5432/godrive?sslmode=disable"
-make migrate-up      # chạy TẤT CẢ migration, hiện có 0001 … 0004
+make migrate-up      # chạy TẤT CẢ migration, hiện có 0001 … 0010
 ```
 
 Cần `golang-migrate`: `brew install golang-migrate`
@@ -105,6 +106,46 @@ thay cho `GEOGRAPHY` + GIST).
 > **Không dùng biến thể nogis ở production** — truy vấn lân cận theo bán kính cần index GIST.
 > Biến thể này sinh tự động từ schema chính bằng `scripts/gen-nogis.py`; **đừng sửa tay**.
 
+### Bảng lịch sử chỉ-thêm-mới — bắt buộc khi dựng môi trường
+
+Migration `0010` khoá năm bảng lịch sử — `ledger_entries`, `ledger_transactions`, `trip_events`,
+`admin_audit_log`, `settings_history` — bằng **hai lớp**:
+
+1. **Role `godrive_app`** (NOLOGIN) có đủ quyền thường nhưng **không** có `UPDATE`/`DELETE`/`TRUNCATE`
+   trên năm bảng đó. Ứng dụng phải nối bằng một user thuộc role này:
+
+   ```sql
+   -- chạy MỘT lần, bằng user đã chạy migration
+   CREATE USER godrive_api LOGIN PASSWORD '<từ kho bí mật>' IN ROLE godrive_app;
+   ```
+   ```bash
+   DATABASE_URL="postgres://godrive_api:<mật khẩu>@<host>:5432/godrive?sslmode=require"
+   ```
+
+   Migration vẫn chạy bằng user chủ sở hữu bảng — `godrive_app` không tạo được bảng.
+
+2. **Trigger** chặn `UPDATE`/`DELETE`/`TRUNCATE` trên năm bảng đó với **mọi** người, kể cả superuser.
+   Lớp này tồn tại vì lớp 1 phụ thuộc việc người triển khai nhớ dùng đúng user.
+
+**Tự kiểm lúc khởi động** (`checkAppendOnlyGuard`): nếu user đang nối sửa được bất kỳ bảng nào trong
+năm bảng, hoặc trigger nào bị tắt, thì ở `APP_ENV=prod` tiến trình **từ chối khởi động**; ở môi trường
+khác chỉ log cảnh báo `bảng lịch sử KHÔNG được bảo vệ` (máy dev nối bằng superuser là bình thường).
+
+**Sửa dữ liệu lịch sử** chỉ khi có quyết định bằng văn bản, và phải là superuser, trong một transaction:
+
+```sql
+BEGIN;
+SET LOCAL session_replication_role = replica;  -- tắt trigger, CHỈ trong transaction này
+-- ... câu sửa ...
+COMMIT;
+```
+
+Cách đúng gần như luôn là **ghi bút toán bù trừ**, không phải sửa bút toán cũ.
+
+> Bảng chỉ-thêm-mới **mới** trong migration sau này phải tự `REVOKE` và tự tạo trigger như `0010`,
+> rồi thêm vào `appendOnlyTables` trong [dbguard.go](../godrive/internal/app/dbguard.go). Bảng thường thì
+> tự có quyền nhờ `ALTER DEFAULT PRIVILEGES` — miễn là migration chạy bằng cùng user đã chạy `0010`.
+
 ### Chạy test tích hợp Postgres
 
 Các test này **XOÁ SẠCH bảng** trước khi chạy, nên chúng dùng biến môi trường **riêng** —
@@ -119,6 +160,11 @@ TEST_DATABASE_URL="postgres://postgres@localhost:5432/godrive_test?sslmode=disab
 ```
 
 Không đặt biến này thì các test Postgres tự `SKIP`, `make test` vẫn xanh.
+
+> **App trong test nối bằng `godrive_app`** (thêm `role=godrive_app` vào chuỗi kết nối), còn phần dọn
+> bảng chạy bằng superuser với `session_replication_role = replica`. Vì vậy user trong
+> `TEST_DATABASE_URL` phải là **superuser**, và cả bộ test tích hợp là bằng chứng ứng dụng chạy được
+> với quyền đã bị cắt.
 
 > **Tên CSDL bắt buộc chứa `test`.** `requireTestDatabase` từ chối chạy nếu không, và báo lỗi chỉ rõ
 > cách tạo CSDL đúng. Biến môi trường riêng thôi chưa đủ: chỉ cần dán nhầm một chuỗi kết nối là bộ
@@ -321,7 +367,9 @@ ORDER BY 2;
 - [ ] `ADMIN_PHONES` đặt tường minh, chỉ gồm người thực sự cần quyền
 - [x] Sổ cái đã nằm ở Postgres ([T-02](07-todo.md#t-02)) — **tuyệt đối không phát hành với `MemoryLedger`**
 - [ ] **`DEV_AUTH=false`** ⇒ `POST /v1/drivers/me/topup` không được đăng ký. Kiểm bằng cách gọi thử: phải trả 404
-- [ ] Role ứng dụng **không có** `UPDATE`/`DELETE` trên `ledger_entries`, `trip_events`, `admin_audit_log` ([T-27](07-todo.md#t-27))
+- [ ] `DATABASE_URL` nối bằng user **thuộc role `godrive_app`**, không phải chủ sở hữu bảng hay superuser ([§8.3](#bảng-lịch-sử-chỉ-thêm-mới--bắt-buộc-khi-dựng-môi-trường)).
+      Có cơ chế tự kiểm: ở `APP_ENV=prod` sai role thì tiến trình **không khởi động**, nên chỉ cần xác nhận pod lên được
+- [ ] Không còn dòng log `"bảng lịch sử KHÔNG được bảo vệ"` lúc khởi động ở staging
 - [ ] Không còn dòng log `"một số store vẫn ở bộ nhớ dù đã bật Postgres"` lúc khởi động
 - [ ] Toàn bộ câu SQL bất biến ở §8.7 trả về kết quả sạch trên dữ liệu staging
 - [ ] `NATS_URL` đã đặt — không có nó thì giết pod giữa chừng sẽ mất việc đang xử lý

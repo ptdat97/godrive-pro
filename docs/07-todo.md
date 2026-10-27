@@ -6,7 +6,7 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ:** **25 / 28** — GĐ 0, 1, 2 xong · GĐ 3 xong phần hạ tầng · GĐ 4 xong đường tiền và hai chốt bảo mật
+**Tiến độ:** **26 / 28** — GĐ 0, 1, 2 xong · GĐ 3 xong phần hạ tầng · GĐ 4 xong đường tiền và hai chốt bảo mật
 
 | GĐ | Xong | Còn |
 |---|---|---|
@@ -15,15 +15,16 @@
 | GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
 | GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
 | GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC, hạn giấy tờ chưa) | T-23, T-26 |
-| Chưa xếp | — | T-27 (quyền CSDL, `P0` khi triển khai), T-28 |
+| Chưa xếp | ✅ T-27 (quyền CSDL + trigger + tự kiểm lúc khởi động) | T-28 |
 | Trước app | ✅ T-32 · 🟡 T-31 (chiều xuống xong; còn đo tải p95) | T-33 (cần credential FCM/APNs) |
 
 **Ngoài kế hoạch:** **7 lỗi** phát hiện khi kiểm thử
 ([§5.4](05-doi-chieu-spec-code.md#loi-moi)) — đều đã sửa và có test hồi quy đã được kiểm ngược
 (khôi phục lỗi → xác nhận test đỏ → sửa lại).
 
-**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **166 test in-memory, 209 test với
-đủ hạ tầng** (Postgres, Redis, NATS, MQTT — đếm lại 2026-10-27, sau T-31) · `-race` sạch, không flake · luồng đầu-cuối qua HTTP
+**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **166 test in-memory, 212 test với
+đủ hạ tầng** (Postgres, Redis, NATS, MQTT — đếm lại 2026-10-27, sau T-27; app trong test tích hợp
+nối CSDL bằng role bị cắt quyền `godrive_app`) · `-race` sạch, không flake · luồng đầu-cuối qua HTTP
 thật · **2 tiến trình API thật**, `SIGKILL` một pod giữa chừng không mất việc · **9 bất biến kiểm
 trực tiếp trên CSDL** sau khi chạy.
 
@@ -452,17 +453,34 @@ go test ./internal/payment/... -run TestWebhookRejectsBadSignature
 
 ---
 
-### <a id="t-27"></a>T-27 · Quyền CSDL chặn sửa/xoá bảng append-only `[AC §5]` `P0`
+### <a id="t-27"></a>T-27 · ✅ Quyền CSDL chặn sửa/xoá bảng append-only `[AC §5]` `P0`
 
-Còn nợ từ [T-02](#t-02). Bất biến "chỉ thêm mới" hiện chỉ được giữ bằng quy ước ở tầng code — không
-có gì ngăn một câu SQL chạy tay xoá lịch sử tài chính.
+Còn nợ từ [T-02](#t-02). Bất biến "chỉ thêm mới" trước đây chỉ được giữ bằng quy ước ở tầng code —
+không có gì ngăn một câu SQL chạy tay xoá lịch sử tài chính.
 
-- [ ] Tạo role ứng dụng riêng (không phải superuser)
-- [ ] `REVOKE UPDATE, DELETE ON ledger_entries, trip_events, admin_audit_log FROM <role>`
-- [ ] Kiểm trong CI: chạy `UPDATE ledger_entries SET amount_vnd=0` bằng role ứng dụng → **phải bị từ chối**
-- [ ] Ghi vào tài liệu vận hành như một bước bắt buộc khi dựng môi trường
+- [x] Migration `0010_append_only` tạo role ứng dụng `godrive_app` (NOLOGIN, không phải superuser);
+      user đăng nhập thật của ứng dụng là thành viên của role này
+- [x] `REVOKE UPDATE, DELETE, TRUNCATE` trên **năm** bảng chứ không phải ba: thêm `ledger_transactions`
+      (khoá idempotency của sổ cái — xoá một dòng là mở đường ghi sổ **lần hai**) và `settings_history`
+      (bằng chứng ai đổi biểu giá — sửa được thì không còn là bằng chứng)
+- [x] **Lớp thứ hai — trigger** chặn cả chủ sở hữu bảng lẫn superuser. Lớp role phụ thuộc việc người
+      triển khai nhớ dùng đúng user; quên một lần là nó vô dụng mà không có gì báo
+- [x] **Tự kiểm lúc khởi động**: `APP_ENV=prod` mà user sửa được lịch sử hoặc trigger bị tắt thì tiến
+      trình không lên. Đây là chỗ tài liệu không làm được — dùng nhầm user không gây ra lỗi nào cả
+- [x] Kiểm trong test: **mọi** app trong bộ test tích hợp nối bằng `godrive_app` — cả bộ test là bằng
+      chứng ứng dụng chạy được với quyền đã cắt, không riêng ba test của T-27
+- [x] Ghi vào tài liệu vận hành như bước bắt buộc ([08 §8.3](08-van-hanh.md#bảng-lịch-sử-chỉ-thêm-mới--bắt-buộc-khi-dựng-môi-trường), §8.8)
 
-Hoàn thành T-27 sẽ đóng AC §5 *"`trip_events` không bao giờ bị update/delete — verify qua DB role permission"*.
+**Verify** — `TestAppRoleCannotRewriteHistory` (đúng câu `UPDATE ledger_entries SET amount_vnd=0` bị
+từ chối `42501`, cùng `UPDATE`/`DELETE`/`TRUNCATE` trên cả năm bảng; `INSERT` vẫn được) ·
+`TestTriggerBlocksEvenSuperuser` · `TestStartupRefusesPrivilegedRoleInProduction` (kể cả khi chỉ một
+trigger bị tắt). Kiểm ngược: gỡ `0010` → cả ba đỏ. `0010` chạy được up → down → up.
+
+Đóng AC §5 *"`trip_events` không bao giờ bị update/delete — verify qua DB role permission"*.
+
+**Cái giá:** dọn bảng giữa các lần test giờ phải `SET LOCAL session_replication_role = replica`, nên
+user của `TEST_DATABASE_URL` phải là superuser. Đó cũng chính là lối thoát có chủ đích cho việc sửa
+dữ liệu lịch sử khi có quyết định bằng văn bản.
 
 ---
 
@@ -797,7 +815,7 @@ Cần dữ liệu chuyến thật mới có ý nghĩa — xếp sau pilot.
 | ✅ [G-30](05-doi-chieu-spec-code.md#g-30) `matching.MemoryStore` lệch đồng hồ | *(sửa khi kiểm thử)* | P1 | 1 |
 | ✅ [G-31](05-doi-chieu-spec-code.md#g-31) sổ cái nhận bút toán vô chủ | *(sửa khi kiểm thử)* | P0 | 1 |
 | ✅ [G-32](05-doi-chieu-spec-code.md#g-32) `pkg/idem` rò rỉ khoá quá hạn | *(sửa khi kiểm thử)* | P2 | 1 |
-| — quyền DB chặn sửa/xoá bảng append-only | [T-27](#t-27) | P0 | 1 |
+| — quyền DB chặn sửa/xoá bảng append-only | [T-27](#t-27) | ✅ xong | 1 |
 
 ---
 

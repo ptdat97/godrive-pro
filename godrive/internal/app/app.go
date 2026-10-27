@@ -150,6 +150,10 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		conn.SetMaxOpenConns(50)
 		conn.SetMaxIdleConns(10)
 		db = conn
+		if err := checkAppendOnlyGuard(context.Background(), conn, log, cfg.Env == "prod"); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 		driverRepo = driver.NewPostgresRepo(conn)
 		tripRepo = trip.NewPostgresRepo(conn)
 		// Bỏ sót nhánh này từng làm bảng accounts không bao giờ được ghi, kéo

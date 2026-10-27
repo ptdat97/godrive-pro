@@ -378,7 +378,7 @@ func newReplica(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	cfg.Env = "test"
-	cfg.DatabaseURL = os.Getenv(testDBEnv)
+	cfg.DatabaseURL = asAppRole(t, os.Getenv(testDBEnv))
 	cfg.RedisURL = os.Getenv(testRedisEnv)
 	cfg.DevAuth = true
 
