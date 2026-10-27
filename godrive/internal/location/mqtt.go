@@ -150,6 +150,30 @@ func (c *MQTTConsumer) onStatus(_ mqtt.Client, m mqtt.Message) {
 	c.log.Info("tài xế mất kết nối, đã gỡ khỏi chỉ mục", "driver_id", driverID)
 }
 
+// Publish đẩy một tin xuống thiết bị qua chính kết nối đang nhận ping.
+//
+// Dùng chung kết nối thay vì mở cái thứ hai: tài khoản dịch vụ đã có quyền
+// trên mọi topic, và mỗi pod giữ thêm một clientId là thêm một thứ phải giữ
+// cho khác nhau giữa các pod.
+//
+// retain luôn false: tin giữ lại trên broker sẽ được giao cho thiết bị vào
+// SAU — một lời mời đã hết hạn hay trạng thái chuyến đã cũ. Thiết bị vào lại
+// thì hỏi HTTP để lấy trạng thái hiện tại.
+func (c *MQTTConsumer) Publish(ctx context.Context, topic string, qos byte, payload []byte) error {
+	t := c.client.Publish(topic, qos, false, payload)
+	wait := 3 * time.Second
+	if dl, ok := ctx.Deadline(); ok {
+		wait = time.Until(dl)
+	}
+	if !t.WaitTimeout(wait) {
+		return errs.E(errs.KindInternal, "mqtt_publish_timeout", "đẩy tin MQTT quá hạn")
+	}
+	if err := t.Error(); err != nil {
+		return errs.Wrap(errs.KindInternal, "mqtt_publish_failed", "không đẩy được tin MQTT", err)
+	}
+	return nil
+}
+
 // Ping kiểm tra kết nối MQTT.
 func (c *MQTTConsumer) Ping(_ context.Context) error {
 	if !c.client.IsConnectionOpen() {

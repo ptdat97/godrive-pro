@@ -165,13 +165,94 @@ func TestSuspendedDriverCannotConnect(t *testing.T) {
 // Token của khách hoặc admin không mở được luồng vị trí tài xế.
 func TestNonDriverRolesRejected(t *testing.T) {
 	svc, iss, _ := newSvc(t)
-	for _, role := range []authn.Role{authn.RoleRider, authn.RoleAdmin} {
-		d := svc.Authenticate(context.Background(), Request{
-			ClientID: "drv_drv_a", Username: "drv_a",
-			Password: tokenFor(t, iss, "acc_a", role),
+	d := svc.Authenticate(context.Background(), Request{
+		ClientID: "drv_drv_a", Username: "drv_a",
+		Password: tokenFor(t, iss, "acc_a", authn.RoleAdmin),
+	})
+	if d.Allow {
+		t.Error("vai trò admin không được vào")
+	}
+	// Khách cũng bị từ chối khi chưa bật MQTT cho khách — mặc định đóng.
+	d = svc.Authenticate(context.Background(), Request{
+		ClientID: "rdr_acc_r", Username: "acc_r",
+		Password: tokenFor(t, iss, "acc_r", authn.RoleRider),
+	})
+	if d.Allow {
+		t.Error("chưa gọi UseRiderTrips mà khách vẫn vào được")
+	}
+}
+
+type fakeRiderTrips map[string]bool // riderID -> đang có chuyến
+
+func (f fakeRiderTrips) HasActiveTripAsRider(_ context.Context, riderID string) (bool, error) {
+	if riderID == "acc_loi" {
+		return false, errors.New("CSDL chết")
+	}
+	return f[riderID], nil
+}
+
+// Khách có chuyến thì vào được, và chỉ NGHE được topic của chính mình.
+func TestRiderWithActiveTripGetsOwnDownlinkOnly(t *testing.T) {
+	svc, iss, _ := newSvc(t)
+	svc.UseRiderTrips(fakeRiderTrips{"acc_r": true})
+	d := svc.Authenticate(context.Background(), Request{
+		ClientID: "rdr_acc_r-ios", Username: "acc_r",
+		Password: tokenFor(t, iss, "acc_r", authn.RoleRider),
+	})
+	if !d.Allow {
+		t.Fatalf("khách đang có chuyến phải vào được: %s", d.Deny)
+	}
+	for _, r := range d.Rules {
+		if r.Allow && r.Action != ActionSubscribe {
+			t.Errorf("khách không được publish vào đâu cả: %+v", r)
+		}
+	}
+
+	q := func(clientID, user, topic string, act Action) bool {
+		return svc.Authorize(context.Background(), AuthzRequest{
+			ClientID: clientID, Username: user, Topic: topic, Action: act,
 		})
-		if d.Allow {
-			t.Errorf("vai trò %s không được vào", role)
+	}
+	for _, c := range []struct {
+		topic string
+		act   Action
+		want  bool
+		why   string
+	}{
+		{"rdr/acc_r/trip", ActionSubscribe, true, "trạng thái chuyến của mình"},
+		{"rdr/acc_r/driver_loc", ActionSubscribe, true, "vị trí tài xế đang tới"},
+		{"rdr/acc_x/driver_loc", ActionSubscribe, false, "theo dõi tài xế của chuyến người khác"},
+		{"rdr/acc_r/trip", ActionPublish, false, "giả tin trạng thái chuyến"},
+		{"drv/acc_r/loc", ActionPublish, false, "khách giả làm tài xế"},
+		{"drv/drv_a/offer", ActionSubscribe, false, "nghe lén lời mời của tài xế"},
+		{"rdr/#", ActionSubscribe, false, "nghe tất cả khách"},
+	} {
+		if got := q("rdr_acc_r-ios", "acc_r", c.topic, c.act); got != c.want {
+			t.Errorf("%s %s (%s): được %v, muốn %v", c.act, c.topic, c.why, got, c.want)
+		}
+	}
+}
+
+func TestRiderRejected(t *testing.T) {
+	svc, iss, _ := newSvc(t)
+	svc.UseRiderTrips(fakeRiderTrips{"acc_r": true, "acc_s": true})
+	for _, c := range []struct {
+		why string
+		req Request
+	}{
+		{"không có chuyến nào", Request{ClientID: "rdr_acc_n", Username: "acc_n",
+			Password: tokenFor(t, iss, "acc_n", authn.RoleRider)}},
+		{"tên đăng nhập của khách khác", Request{ClientID: "rdr_acc_s", Username: "acc_s",
+			Password: tokenFor(t, iss, "acc_r", authn.RoleRider)}},
+		{"mượn clientId của khách khác", Request{ClientID: "rdr_acc_s", Username: "acc_r",
+			Password: tokenFor(t, iss, "acc_r", authn.RoleRider)}},
+		{"clientId dạng tài xế", Request{ClientID: "drv_acc_r", Username: "acc_r",
+			Password: tokenFor(t, iss, "acc_r", authn.RoleRider)}},
+		{"không tra được chuyến (fail-closed)", Request{ClientID: "rdr_acc_loi", Username: "acc_loi",
+			Password: tokenFor(t, iss, "acc_loi", authn.RoleRider)}},
+	} {
+		if d := svc.Authenticate(context.Background(), c.req); d.Allow {
+			t.Errorf("%s: phải từ chối", c.why)
 		}
 	}
 }

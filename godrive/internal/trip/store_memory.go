@@ -96,6 +96,16 @@ func (r *MemoryRepo) ActiveByDriver(_ context.Context, driverID string) (*Trip, 
 	return out[0], nil
 }
 
+func (r *MemoryRepo) ActiveByRider(_ context.Context, riderID string) (*Trip, error) {
+	out := r.filter(func(t *Trip) bool {
+		return t.RiderID == riderID && !t.Status.IsTerminal()
+	}, 1)
+	if len(out) == 0 {
+		return nil, errs.NotFound("trip_not_found", "Không có chuyến đang hoạt động.")
+	}
+	return out[0], nil
+}
+
 func (r *MemoryRepo) Events(_ context.Context, tripID string) ([]Event, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

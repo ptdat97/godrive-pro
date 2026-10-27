@@ -69,16 +69,16 @@ func callAPI(t *testing.T, api, method, path, token string, body any) map[string
 	return out
 }
 
-// newRemoteDriver tạo một tài xế THẬT trên backend đang chạy và trả về mã tài
-// xế cùng token phiên của chính họ.
-func newRemoteDriver(t *testing.T, api string) (string, string) {
+// remoteLogin đăng nhập bằng OTP trên backend đang chạy, trả số điện thoại,
+// token phiên và mã tài khoản.
+func remoteLogin(t *testing.T, api, role string) (string, string, string) {
 	t.Helper()
 	// Số di động VN: 0 + đầu số + 8 chữ số. Lấy theo đồng hồ để mỗi lần chạy là
 	// một tài khoản mới, vì backend thật giữ lại dữ liệu giữa các lần chạy.
 	n := time.Now().UnixNano()
 	phone := fmt.Sprintf("09%08d", n%1e8)
 	ch := callAPI(t, api, "POST", "/v1/auth/otp", "",
-		map[string]any{"phone": phone, "role": "driver"})
+		map[string]any{"phone": phone, "role": role})
 	code, _ := ch["dev_code"].(string)
 	if code == "" {
 		t.Skip("bỏ qua: backend không ở chế độ DEV_AUTH nên không lấy được OTP")
@@ -87,6 +87,16 @@ func newRemoteDriver(t *testing.T, api string) (string, string) {
 		"challenge_id": ch["challenge_id"], "code": code, "device_id": "test-mqtt",
 	})
 	tok, _ := tp["access_token"].(string)
+	acc, _ := tp["account"].(map[string]any)
+	accID, _ := acc["id"].(string)
+	return phone, tok, accID
+}
+
+// newRemoteDriver tạo một tài xế THẬT trên backend đang chạy và trả về mã tài
+// xế cùng token phiên của chính họ.
+func newRemoteDriver(t *testing.T, api string) (string, string) {
+	t.Helper()
+	phone, tok, _ := remoteLogin(t, api, "driver")
 
 	suffix := phone[2:] // 8 chữ số, đủ để mọi giấy tờ là duy nhất
 	d := callAPI(t, api, "POST", "/v1/drivers/register", tok, map[string]any{
@@ -232,4 +242,116 @@ func TestCannotHijackAnotherDriverClientID(t *testing.T) {
 	if !connects(t, url, "drv_"+attackerID+"_pixel", attackerID, attackerTok) {
 		t.Error("clientId của chính mình kèm hậu tố thiết bị phải dùng được")
 	}
+}
+
+// T-31 qua broker THẬT: khách có chuyến nối được, nhận được lần đổi trạng thái
+// chuyến của mình, và chỉ của mình.
+//
+// Đi trọn đường thật: HTTP huỷ chuyến → outbox → NATS → consumer đẩy tin →
+// EMQX hỏi ACL → thiết bị. Test với Downlink giả chỉ chứng minh được khúc giữa.
+func TestRiderReceivesOwnTripPushOverBroker(t *testing.T) {
+	url, api := requireSecuredBroker(t)
+
+	_, tok, riderID := remoteLogin(t, api, "rider")
+	tripID := remoteTrip(t, api, tok)
+	// Kẻ nghe trộm là một khách THẬT đang có chuyến — tức vượt qua được bước
+	// xác thực — để "không nhận được gì" chứng minh được ACL chứ không chỉ
+	// chứng minh rằng người lạ không vào được cửa.
+	_, tok2, rider2 := remoteLogin(t, api, "rider")
+	remoteTrip(t, api, tok2)
+
+	own := "rdr/" + riderID + "/trip"
+	var mu sync.Mutex
+	var mine, stolen []string
+	record := func(dst *[]string) mqtt.MessageHandler {
+		return func(_ mqtt.Client, m mqtt.Message) {
+			var p PushMessage
+			_ = json.Unmarshal(m.Payload(), &p)
+			mu.Lock()
+			defer mu.Unlock()
+			if p.Trip != nil {
+				*dst = append(*dst, string(p.Trip.Status))
+			}
+		}
+	}
+
+	victim, ok := dial(url, "rdr_"+riderID+"-test", riderID, tok)
+	if !ok {
+		t.Fatal("khách đang có chuyến phải nối được broker")
+	}
+	defer victim.Disconnect(50)
+	victim.Subscribe(own, 1, record(&mine)).WaitTimeout(3 * time.Second)
+
+	// Kết nối RIÊNG cho kẻ nghe trộm: broker đặt deny_action=disconnect nên
+	// lần đăng ký trái phép sẽ cắt luôn kết nối đó — dùng chung kết nối với
+	// nạn nhân thì chính nạn nhân bị đá ra.
+	spy, ok := dial(url, "rdr_"+rider2+"-test", rider2, tok2)
+	if !ok {
+		t.Fatal("khách thứ hai đang có chuyến phải nối được broker")
+	}
+	defer spy.Disconnect(50)
+	spy.Subscribe(own, 1, record(&stolen)).WaitTimeout(3 * time.Second)
+	time.Sleep(300 * time.Millisecond) // để đăng ký kịp có hiệu lực trên broker
+
+	callAPI(t, api, "POST", "/v1/trips/"+tripID+"/cancel", tok, map[string]any{"reason": "test"})
+
+	got := func() ([]string, []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), mine...), append([]string(nil), stolen...)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if m, _ := got(); contains(m, "CANCELLED") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	m, s := got()
+	if !contains(m, "CANCELLED") {
+		t.Fatalf("khách không nhận được tin CANCELLED của chuyến mình, nhận được %v", m)
+	}
+	if len(s) > 0 {
+		t.Fatalf("khách khác nghe được chuyến không phải của mình: %v", s)
+	}
+
+	// Chuyến đã kết thúc → không còn lý do giữ kết nối, broker phải từ chối.
+	if connects(t, url, "rdr_"+riderID+"-lan2", riderID, tok) {
+		t.Fatal("khách không còn chuyến nào mà vẫn nối được broker")
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// remoteTrip đặt một chuyến xe máy trên backend đang chạy, trả mã chuyến.
+func remoteTrip(t *testing.T, api, tok string) string {
+	t.Helper()
+	q := callAPI(t, api, "POST", "/v1/quotes", tok, map[string]any{
+		"pickup":  map[string]any{"lat": pickup.Lat, "lng": pickup.Lng},
+		"dropoff": map[string]any{"lat": dropoff.Lat, "lng": dropoff.Lng},
+	})
+	var quoteID any
+	for _, raw := range q["quotes"].([]any) {
+		if m := raw.(map[string]any); m["vehicle_type"] == "BIKE" {
+			quoteID = m["id"]
+		}
+	}
+	tr := callAPI(t, api, "POST", "/v1/trips", tok, map[string]any{
+		"quote_id":       quoteID,
+		"pickup":         map[string]any{"point": map[string]any{"lat": pickup.Lat, "lng": pickup.Lng}},
+		"dropoff":        map[string]any{"point": map[string]any{"lat": dropoff.Lat, "lng": dropoff.Lng}},
+		"payment_method": "CASH",
+	})
+	id, _ := tr["id"].(string)
+	if id == "" {
+		t.Fatalf("không đặt được chuyến: %v", tr)
+	}
+	return id
 }

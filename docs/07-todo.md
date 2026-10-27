@@ -16,13 +16,14 @@
 | GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
 | GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC, hạn giấy tờ chưa) | T-23, T-26 |
 | Chưa xếp | — | T-27 (quyền CSDL, `P0` khi triển khai), T-28 |
+| Trước app | ✅ T-32 · 🟡 T-31 (chiều xuống xong; còn đo tải p95) | T-33 (cần credential FCM/APNs) |
 
 **Ngoài kế hoạch:** **7 lỗi** phát hiện khi kiểm thử
 ([§5.4](05-doi-chieu-spec-code.md#loi-moi)) — đều đã sửa và có test hồi quy đã được kiểm ngược
 (khôi phục lỗi → xác nhận test đỏ → sửa lại).
 
-**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **118 test in-memory, 157 test với
-đủ hạ tầng** (Postgres, Redis, NATS, MQTT) · `-race` sạch, không flake · luồng đầu-cuối qua HTTP
+**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **166 test in-memory, 209 test với
+đủ hạ tầng** (Postgres, Redis, NATS, MQTT — đếm lại 2026-10-27, sau T-31) · `-race` sạch, không flake · luồng đầu-cuối qua HTTP
 thật · **2 tiến trình API thật**, `SIGKILL` một pod giữa chừng không mất việc · **9 bất biến kiểm
 trực tiếp trên CSDL** sau khi chạy.
 
@@ -523,7 +524,7 @@ liệu dev là thứ vứt đi, nhưng **không còn chấp nhận được** t�
 
 ---
 
-### <a id="t-31"></a>T-31 · Chiều xuống realtime — máy chủ đẩy được tin tới thiết bị `P0`
+### <a id="t-31"></a>T-31 · 🟡 Chiều xuống realtime — máy chủ đẩy được tin tới thiết bị `P0`
 
 **Lỗ hổng lớn nhất về kỹ thuật.** MQTT hiện chỉ có chiều lên: máy chủ `Subscribe` vào `drv/+/loc`
 và `drv/+/status`, không có một lệnh `Publish` nào đi ngược lại. Hệ quả:
@@ -541,17 +542,39 @@ Việc này phải xong **trước khi viết app**, vì nó quyết định ki�
       phải giữ kết nối MQTT để gửi vị trí, nên thêm chiều xuống là mở rộng cái đang có chứ không
       dựng hạ tầng mới. MQTT sinh ra cho mạng di động chập chờn: QoS 1, phiên bền, Last Will —
       đúng những thứ mà WebSocket tự cài sẽ phải làm lại từ đầu.
-- [ ] Topic chiều xuống: `drv/{id}/offer`, `drv/{id}/trip`, `rdr/{id}/trip` (QoS 1, `retain=false`)
-- [ ] Phát từ nơi đã có sự kiện: consumer NATS, không gọi MQTT rải rác trong Service
-- [ ] Đẩy lời mời tới đúng tài xế được chào
-- [ ] Đẩy vị trí tài xế tới đúng khách đang trong chuyến
-- [ ] Đẩy chuyển trạng thái chuyến tới cả hai phía
-- [ ] Xử lý mất kết nối: thiết bị vào lại phải lấy được trạng thái hiện tại, không chỉ tin mới
-- [ ] Không thay thế `GET /v1/offers` — giữ làm đường dự phòng khi kết nối đẩy chết
-- [ ] Kết nối MQTT của khách chỉ mở trong lúc có chuyến, đóng khi chuyến kết thúc
+- [x] Topic chiều xuống: `drv/{id}/offer`, `drv/{id}/trip`, `rdr/{id}/trip` (QoS 1, `retain=false`) —
+      thêm `rdr/{id}/driver_loc` ở **QoS 0** (bản mới thay bản cũ, giao lại bản cũ vô ích)
+- [x] Phát từ consumer của bus (`push-offer`, `push-trip`), không gọi MQTT trong Service — tất cả ở
+      [internal/app/realtime.go](../godrive/internal/app/realtime.go)
+- [x] Sự kiện mới `trip.status_changed` phát ở **mọi** lần đổi trạng thái, đi qua outbox cùng
+      transaction. Trước đây ARRIVED, PAID, EXPIRED không có sự kiện nào nên không đẩy được
+- [x] Đẩy lời mời tới đúng tài xế được chào; lời mời đã hết hạn (bus giao lại muộn) thì **không** đẩy
+- [x] Đẩy vị trí tài xế tới đúng khách đang trong chuyến — tra chuyến mỗi ping, **không nhớ đệm**
+      (bộ đệm sai đúng lúc tài xế sang chuyến kế, khách cũ thấy tài xế đi đón người khác)
+- [x] Đẩy chuyển trạng thái chuyến tới cả hai phía; một phía lỗi không làm phía kia mất tin
+- [x] Mất kết nối: `GET /v1/trips/current` cho cả khách lẫn tài xế, cộng `GET /v1/offers` sẵn có
+- [x] `GET /v1/offers` giữ nguyên làm đường dự phòng
+- [x] Khách chỉ nối được MQTT khi **đang có chuyến** — chặn ở `mqttauth` chứ không chỉ trông vào app.
+      clientId `rdr_{account_id}`, chỉ được NGHE topic của mình, không publish vào đâu
+- [x] Số liệu `godrive_offer_push_delay_seconds`, `godrive_push_total{kind,result}`
+- [ ] **Verify chưa chạy:** p95 < 1s với 1.000 tài xế online mô phỏng — cần bộ test tải của [T-35](#t-35).
+      Số liệu đo đã có sẵn để T-35 đọc
+- [ ] Tin "lời mời đã mất" cho các tài xế khác khi một người đã nhận — hiện họ chỉ biết khi bấm
+      nhận và nhận `trip_taken`
+- [ ] Lời mời đẩy đi chưa mang điểm đón/điểm đến/thu nhập — giống `GET /v1/offers`. App tài xế
+      ([T-39](#t-39)) cần những trường này để quyết định trong 15 giây
 
-**Verify** — đo độ trễ từ lúc `DispatchRound` tạo lời mời tới lúc thiết bị nhận được, p95 < 1s với
-1.000 tài xế online mô phỏng.
+**Verify** — `TestPushFollowsTripLifecycle` · `TestPushOnlyReachesOfferedDrivers` ·
+`TestExpiredOfferIsNotPushed` · `TestTripPushFailureOnOneSideStillReachesOther` ·
+`TestCurrentTripRecoversStateAfterReconnect` · 2 test đơn vị cho khách ở `internal/mqttauth`, và
+**`TestRiderReceivesOwnTripPushOverBroker`** trên broker thật: HTTP huỷ chuyến → outbox → bus →
+consumer → EMQX hỏi ACL → thiết bị; khách thứ hai đã qua được cửa xác thực vẫn không nghe được;
+chuyến kết thúc thì nối lại bị từ chối. Chạy qua cả bus trong tiến trình lẫn NATS JetStream.
+Test đã được kiểm ngược: bỏ `trip.status_changed` hoặc bỏ kiểm hạn lời mời → test đỏ.
+
+**Một cái bẫy lộ ra khi làm:** các test NATS xoá stream `GODRIVE` để bắt đầu sạch. Backend dùng cho
+`TEST_API_URL` mà chung NATS với test thì consumer đẩy tin của nó chết giữa chừng — test broker đỏ
+khi chạy cả gói, xanh khi chạy riêng. Xem [08 §8.13](08-van-hanh.md#813-chiều-xuống-realtime).
 
 ---
 

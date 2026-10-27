@@ -331,6 +331,38 @@ func (s *Service) HasActiveTrip(ctx context.Context, driverID string) (bool, err
 	return t != nil && !t.Status.IsTerminal() && t.Status != StatusPaid, nil
 }
 
+// HasActiveTripAsRider cho biết khách có chuyến nào chưa kết thúc không.
+func (s *Service) HasActiveTripAsRider(ctx context.Context, riderID string) (bool, error) {
+	t, err := s.CurrentForRider(ctx, riderID)
+	return t != nil, err
+}
+
+// CurrentForRider trả chuyến đang diễn ra của khách, nil nếu không có.
+//
+// Đây là đường thiết bị lấy lại trạng thái sau khi mất kết nối đẩy: tin đẩy
+// lỡ trong lúc mất sóng không được gửi lại, nên vào lại là phải hỏi.
+func (s *Service) CurrentForRider(ctx context.Context, riderID string) (*Trip, error) {
+	return noneIfNotFound(s.repo.ActiveByRider(ctx, riderID))
+}
+
+// CurrentForDriver trả chuyến đang diễn ra của tài xế, nil nếu không có.
+func (s *Service) CurrentForDriver(ctx context.Context, driverID string) (*Trip, error) {
+	return noneIfNotFound(s.repo.ActiveByDriver(ctx, driverID))
+}
+
+func noneIfNotFound(t *Trip, err error) (*Trip, error) {
+	if err != nil {
+		if errs.KindOf(err) == errs.KindNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if t.Status.IsTerminal() {
+		return nil, nil
+	}
+	return t, nil
+}
+
 func (s *Service) Get(ctx context.Context, tripID string) (*Trip, error) {
 	return s.repo.Get(ctx, tripID)
 }
@@ -376,6 +408,16 @@ func (s *Service) apply(ctx context.Context, t *Trip, to Status, actor string, m
 	if err := t.transition(to, now); err != nil {
 		return err
 	}
+	// Đi cùng transaction như mọi sự kiện khác: thiết bị không được phép lỡ
+	// một lần đổi trạng thái chỉ vì tiến trình chết ngay sau khi ghi.
+	//
+	// Chụp bản sao NGAY ĐÂY. Bản bộ nhớ phát sau khi Save trả về, và người gọi
+	// có thể sửa t tiếp — đẩy đi trạng thái của lần đổi sau là sai thứ tự.
+	snap := *t
+	msgs = append(msgs, Message{
+		Topic:   eventbus.TopicTripStatusChanged,
+		Payload: map[string]any{"from": from, "trip": &snap},
+	})
 	pending, err := s.repo.Save(ctx, t, Event{
 		ID: id.New("evt"), TripID: t.ID, From: from, To: to, Actor: actor, Meta: meta, At: now,
 	}, msgs...)

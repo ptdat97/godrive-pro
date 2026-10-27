@@ -46,7 +46,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 
 ---
 
-## 4.2 Bảng endpoint đầy đủ (46 route)
+## 4.2 Bảng endpoint đầy đủ (47 route)
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
@@ -77,6 +77,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | **Chuyến đi** ||||
 | `POST` | `/v1/trips` | `rider` | `trip.create` |
 | `GET` | `/v1/trips` | `rider` | `trip.list` |
+| `GET` | `/v1/trips/current` | `rider`+`driver` | `trip.current` — chuyến đang diễn ra của người gọi, `{"trip": null}` nếu không có. Gọi **mỗi lần nối lại MQTT** |
 | `GET` | `/v1/trips/{id}` | `rider`+`driver` | `trip.get` |
 | `GET` | `/v1/trips/{id}/events` | `rider`+`driver` | `trip.events` |
 | `POST` | `/v1/trips/{id}/cancel` | `rider`+`driver` | `trip.cancel` |
@@ -250,6 +251,38 @@ POST /v1/trips/{id}/complete   # IN_PROGRESS → COMPLETED  (→ worker tự ghi
 ```
 
 Sai thứ tự → `409 invalid_transition`. Không phải chuyến của mình → `403 not_your_trip`.
+
+### Chiều xuống realtime (MQTT) — T-31
+
+Máy chủ đẩy tin qua chính broker mà app tài xế đang gửi vị trí. Mật khẩu MQTT **là token phiên**.
+
+| Thiết bị | clientId | username | Điều kiện vào cửa |
+|---|---|---|---|
+| Tài xế | `drv_{driver_id}…` | `driver_id` | tài khoản không bị khoá |
+| Khách | `rdr_{account_id}…` | `account_id` | **đang có chuyến** chưa kết thúc — ngoài lúc đó broker từ chối |
+
+| Topic | Chiều | QoS | `type` | Khi nào |
+|---|---|---|---|---|
+| `drv/{id}/offer` | xuống | 1 | `offer` | dispatcher vừa chào tài xế này |
+| `drv/{id}/trip` | xuống | 1 | `trip` | chuyến của tài xế đổi trạng thái |
+| `rdr/{id}/trip` | xuống | 1 | `trip` | chuyến của khách đổi trạng thái — **mọi** bước, kể cả ARRIVED, PAID, EXPIRED |
+| `rdr/{id}/driver_loc` | xuống | **0** | `driver_loc` | mỗi ping hợp lệ của tài xế đang ASSIGNED/ARRIVED/IN_PROGRESS chuyến này |
+
+```jsonc
+// Mọi tin cùng một phong bì; chỉ trường ứng với `type` có mặt
+{"type":"offer","offer":{ /* giống phần tử của GET /v1/offers */ }}
+{"type":"trip","from":"ASSIGNED","trip":{ /* giống GET /v1/trips/{id} */ }}
+{"type":"driver_loc","driver":{"trip_id":"trp_…","driver_id":"drv_…","lat":10.77,"lng":106.69,"bearing_deg":45,"at":"…"}}
+```
+
+Quy tắc phía thiết bị:
+
+- **Tin đẩy là cách biết SỚM, không phải nguồn sự thật.** `retain=false`, nên tin lỡ lúc mất sóng không
+  được gửi lại. Mỗi lần nối lại: gọi `GET /v1/trips/current` (và `GET /v1/offers` với tài xế).
+- **Có thể nhận trùng** (bus giao lại at-least-once). Bỏ qua tin `trip` có `updated_at` không mới hơn bản đang giữ.
+- `GET /v1/offers` **vẫn giữ** làm đường dự phòng khi kết nối đẩy chết.
+- Khách đóng kết nối khi chuyến kết thúc. Lần nối kế tiếp sẽ bị từ chối cho tới khi có chuyến mới.
+- Đăng ký topic không phải của mình → broker **cắt kết nối** (`deny_action=disconnect`), không chỉ từ chối lệnh.
 
 ---
 

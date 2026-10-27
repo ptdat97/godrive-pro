@@ -71,6 +71,9 @@ type App struct {
 	// MQTT khác nil khi có MQTT_URL. Luồng vị trí chính đi qua đây; endpoint
 	// HTTP /v1/locations/ping vẫn giữ làm đường dự phòng.
 	MQTT *location.MQTTConsumer
+	// Downlink là đường đẩy tin xuống thiết bị — chính là MQTT khi có. Nil thì
+	// thiết bị chỉ biết tin mới bằng cách hỏi HTTP.
+	Downlink Downlink
 
 	adminAuth *admin.Auth
 	db        *sql.DB
@@ -316,6 +319,7 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 			return nil, err
 		}
 		app.MQTT = mc
+		app.Downlink = mc
 	}
 
 	// Nối cấu hình động vào từng module TRƯỚC khi trả app ra: nếu không, những
@@ -379,6 +383,7 @@ func (a *App) Router() http.Handler {
 	if a.Revoker != nil {
 		mqttSvc.UseRevoker(a.Revoker)
 	}
+	mqttSvc.UseRiderTrips(a.Trips)
 	mqttauth.NewHandler(mqttSvc, a.Log).Register(mux)
 
 	identity.NewHandler(a.Identity, a.Issuer, a.Revoker).Register(mux)

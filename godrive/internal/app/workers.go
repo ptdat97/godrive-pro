@@ -42,6 +42,7 @@ func (a *App) StartWorkers(ctx context.Context) {
 	a.subscribeSettings()
 
 	a.startMetricsConsumers()
+	a.startPushConsumers()
 
 	go a.sweepOTPChallenges(ctx)
 

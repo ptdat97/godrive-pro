@@ -37,7 +37,21 @@ type Service struct {
 	clk     clock.Clock
 	fraud   *FraudDetector
 	thr     ThresholdProvider
+	moved   MovementSink
 }
+
+// MovementSink nhận vị trí của tài xế đang có khách (ASSIGNED hoặc ON_TRIP),
+// để khách thấy xe đang chạy tới.
+//
+// Gọi thẳng chứ không đi qua bus sự kiện: ping tới mỗi 4 giây và ping mới thay
+// thế hoàn toàn ping cũ. Đưa nó qua JetStream là trả giá ghi đĩa và ack cho một
+// thứ mà mất một bản cũng không ai cần giao lại.
+type MovementSink interface {
+	DriverMoved(ctx context.Context, s Snapshot)
+}
+
+// UseMovementSink nối nơi nhận vị trí tài xế đang có khách.
+func (s *Service) UseMovementSink(m MovementSink) { s.moved = m }
 
 // UseThresholds nối nguồn ngưỡng động.
 func (s *Service) UseThresholds(p ThresholdProvider) { s.thr = p }
@@ -102,7 +116,7 @@ func (s *Service) Ingest(ctx context.Context, p Ping) error {
 		return s.idx.Remove(ctx, p.DriverID)
 	}
 
-	return s.idx.Upsert(ctx, Snapshot{
+	snap := Snapshot{
 		DriverID:    p.DriverID,
 		Point:       p.Point,
 		BearingDeg:  p.BearingDeg,
@@ -110,7 +124,16 @@ func (s *Service) Ingest(ctx context.Context, p Ping) error {
 		Status:      d.Status,
 		BatteryPc:   p.BatteryPc,
 		UpdatedAt:   p.At,
-	})
+	}
+	if err := s.idx.Upsert(ctx, snap); err != nil {
+		return err
+	}
+	// Chỉ báo SAU khi ping đã qua mọi bộ lọc: vị trí bị từ chối vì gian lận
+	// không được tới tay khách.
+	if s.moved != nil && (d.Status == driver.StatusAssigned || d.Status == driver.StatusOnTrip) {
+		s.moved.DriverMoved(ctx, snap)
+	}
+	return nil
 }
 
 func (s *Service) Nearby(ctx context.Context, c geo.Point, radiusM float64, f Filter) ([]Snapshot, error) {

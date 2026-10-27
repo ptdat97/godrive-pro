@@ -157,6 +157,10 @@ type Repository interface {
 	Save(ctx context.Context, t *Trip, e Event, msgs ...Message) ([]Message, error)
 	ListByRider(ctx context.Context, riderID string, limit int) ([]*Trip, error)
 	ActiveByDriver(ctx context.Context, driverID string) (*Trip, error)
+	// ActiveByRider trả chuyến chưa kết thúc gần nhất của khách, NotFound nếu
+	// không có. "Chưa kết thúc" tính cả COMPLETED: tiền chưa ghi sổ xong thì
+	// khách vẫn đang chờ một tin nữa.
+	ActiveByRider(ctx context.Context, riderID string) (*Trip, error)
 	ListByStatus(ctx context.Context, s Status, limit int) ([]*Trip, error)
 	Events(ctx context.Context, tripID string) ([]Event, error)
 	// SetRating ghi điểm đánh giá. Chỉ ghi được MỘT lần: trả Conflict nếu

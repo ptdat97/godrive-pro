@@ -26,6 +26,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	mux.Handle("POST /v1/trips", rider(http.HandlerFunc(h.create)))
 	mux.Handle("GET /v1/trips", rider(http.HandlerFunc(h.list)))
+	// Đặt cạnh /{id} nhưng không đụng nhau: ServeMux chọn mẫu cụ thể hơn.
+	mux.Handle("GET /v1/trips/current", any(http.HandlerFunc(h.current)))
 	mux.Handle("GET /v1/trips/{id}", any(http.HandlerFunc(h.get)))
 	mux.Handle("GET /v1/trips/{id}/events", any(http.HandlerFunc(h.events)))
 	mux.Handle("POST /v1/trips/{id}/cancel", any(http.HandlerFunc(h.cancel)))
@@ -63,6 +65,30 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, t)
+}
+
+// current trả chuyến đang diễn ra của người gọi, {"trip": null} nếu không có.
+//
+// Thiết bị gọi mỗi lần nối lại MQTT: tin đẩy lỡ lúc mất sóng không được gửi
+// lại, nên đây là nguồn sự thật, còn tin đẩy chỉ là cách biết SỚM.
+func (h *Handler) current(w http.ResponseWriter, r *http.Request) {
+	var (
+		t   *Trip
+		err error
+	)
+	if c := authn.MustClaims(r.Context()); c.Role == authn.RoleDriver {
+		var did string
+		if did, err = h.driverID(r); err == nil {
+			t, err = h.svc.CurrentForDriver(r.Context(), did)
+		}
+	} else {
+		t, err = h.svc.CurrentForRider(r.Context(), c.Sub)
+	}
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"trip": t})
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {

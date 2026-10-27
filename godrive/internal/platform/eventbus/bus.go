@@ -16,17 +16,22 @@ import (
 
 // Danh sách topic. Đặt tên theo dạng <domain>.<sự kiện quá khứ>.
 const (
-	TopicTripRequested  = "trip.requested"
-	TopicTripAssigned   = "trip.assigned"
-	TopicTripStarted    = "trip.started"
-	TopicTripCompleted  = "trip.completed"
-	TopicTripCancelled  = "trip.cancelled"
-	TopicTripRated      = "trip.rated"
-	TopicDriverOnline   = "driver.online"
-	TopicDriverOffline  = "driver.offline"
-	TopicOfferCreated   = "offer.created"
-	TopicOfferAccepted  = "offer.accepted"
-	TopicPaymentSettled = "payment.settled"
+	TopicTripRequested = "trip.requested"
+	TopicTripAssigned  = "trip.assigned"
+	TopicTripStarted   = "trip.started"
+	TopicTripCompleted = "trip.completed"
+	TopicTripCancelled = "trip.cancelled"
+	TopicTripRated     = "trip.rated"
+	// TopicTripStatusChanged phát ở MỌI lần chuyến đổi trạng thái, kể cả những
+	// bước không có sự kiện nghiệp vụ riêng (ARRIVED, PAID, EXPIRED). Payload
+	// mang trọn chuyến sau khi đổi. Dùng để đẩy tới thiết bị, không dùng cho
+	// nghiệp vụ — nghiệp vụ nghe các topic cụ thể ở trên.
+	TopicTripStatusChanged = "trip.status_changed"
+	TopicDriverOnline      = "driver.online"
+	TopicDriverOffline     = "driver.offline"
+	TopicOfferCreated      = "offer.created"
+	TopicOfferAccepted     = "offer.accepted"
+	TopicPaymentSettled    = "payment.settled"
 	// TopicWalletBalanceChanged phát mỗi khi số dư một tài khoản trong sổ cái
 	// đổi. Dùng để đồng bộ cột cache drivers.wallet_balance.
 	TopicWalletBalanceChanged = "wallet.balance_changed"

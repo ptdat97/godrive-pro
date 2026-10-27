@@ -22,6 +22,7 @@ var (
 	httpBuckets     = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
 	dispatchBuckets = []float64{0.5, 1, 2, 5, 10, 15, 30, 45, 60, 120}
 	surgeBuckets    = []float64{1000, 1200, 1400, 1700, 2000}
+	pushBuckets     = []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 )
 
 type appMetrics struct {
@@ -38,6 +39,9 @@ type appMetrics struct {
 
 	ledgerPosts  *metrics.Counter // ok | error
 	settleErrors *metrics.Counter
+
+	pushes         *metrics.Counter // theo loại tin và kết quả
+	offerPushDelay *metrics.Histogram
 }
 
 func newAppMetrics() *appMetrics {
@@ -62,6 +66,10 @@ func newAppMetrics() *appMetrics {
 			"số lần ghi sổ cái, theo kết quả"),
 		settleErrors: metrics.NewCounter(r, "godrive_settle_errors_total",
 			"số lần ghi sổ chuyến thất bại"),
+		pushes: metrics.NewCounter(r, "godrive_push_total",
+			"số tin đẩy xuống thiết bị, theo loại (offer|trip|driver_loc) và kết quả"),
+		offerPushDelay: metrics.NewHistogram(r, "godrive_offer_push_delay_seconds",
+			"thời gian từ lúc tạo lời mời tới lúc broker nhận tin đẩy", pushBuckets),
 	}
 }
 

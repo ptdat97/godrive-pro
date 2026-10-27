@@ -38,6 +38,15 @@ type DriverLookup interface {
 	GetByAccount(ctx context.Context, accountID string) (*DriverRef, error)
 }
 
+// RiderTrips cho biết khách có chuyến nào đang diễn ra không.
+//
+// Khách chỉ được nối MQTT trong lúc có chuyến: ngoài lúc đó không có gì để
+// đẩy tới họ, và mỗi kết nối mở là một kết nối broker phải giữ. Số khách mở
+// app lớn hơn số chuyến đang chạy nhiều lần.
+type RiderTrips interface {
+	HasActiveTripAsRider(ctx context.Context, riderID string) (bool, error)
+}
+
 // DriverRef là phần thông tin tài xế mà việc phân quyền cần tới — không hơn.
 type DriverRef struct {
 	ID        string
@@ -80,4 +89,11 @@ const (
 	TopicDriverStatus = "drv/%s/status" // lên: Last Will
 	TopicDriverOffer  = "drv/%s/offer"  // xuống: lời mời chuyến
 	TopicDriverTrip   = "drv/%s/trip"   // xuống: chuyển trạng thái chuyến
+)
+
+// Topic của một khách. Khách CHỈ có chiều xuống: không có gì phải báo về qua
+// MQTT, mọi thao tác của khách vẫn đi bằng HTTP.
+const (
+	TopicRiderTrip      = "rdr/%s/trip"       // xuống: chuyển trạng thái chuyến
+	TopicRiderDriverLoc = "rdr/%s/driver_loc" // xuống: vị trí tài xế đang tới / đang chở
 )

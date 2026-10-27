@@ -153,6 +153,12 @@ func (r *PostgresRepo) ActiveByDriver(ctx context.Context, driverID string) (*Tr
         ORDER BY requested_at DESC LIMIT 1`, driverID))
 }
 
+func (r *PostgresRepo) ActiveByRider(ctx context.Context, riderID string) (*Trip, error) {
+	return r.scan(r.db.QueryRowContext(ctx, `SELECT `+tripCols+` FROM trips
+        WHERE rider_id=$1 AND status IN ('CREATED','SEARCHING','ASSIGNED','ARRIVED','IN_PROGRESS','COMPLETED')
+        ORDER BY requested_at DESC LIMIT 1`, riderID))
+}
+
 func (r *PostgresRepo) Events(ctx context.Context, tripID string) ([]Event, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, trip_id, from_status, to_status, actor, meta, at FROM trip_events WHERE trip_id=$1 ORDER BY at`, tripID)

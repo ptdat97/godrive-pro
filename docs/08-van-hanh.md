@@ -368,6 +368,8 @@ ORDER BY 2;
 | `godrive_trips_searching` | gauge | tăng đều mà `godrive_drivers_idle` không tăng — thiếu cung |
 | `godrive_offers_total{outcome}` | counter | tỉ lệ `accepted/created` giảm — chất lượng ghép chuyến đi xuống |
 | `godrive_settle_errors_total` | counter | **> 0** — có chuyến không ghi sổ được |
+| `godrive_offer_push_delay_seconds` | histogram | p95 > 1s — lời mời tới tài xế chậm, mất chuyến vì hết hạn 15 giây |
+| `godrive_push_total{kind,result}` | counter | `result="error"` tăng đều — broker từ chối hoặc mất kết nối; `kind="offer",result="stale"` tăng — bus giao lại muộn |
 | `godrive_surge_permille` | histogram | p99 chạm 2000 kéo dài — thiếu cung nghiêm trọng |
 | `godrive_http_request_duration_seconds` | histogram | p99 > 1s |
 | Bất kỳ gauge nào **= −1** | — | Phép đo lỗi (không đọc được DB/Redis), khác hẳn với "thật sự bằng 0" |
@@ -564,10 +566,10 @@ về mặc định mở toang mà không có gì báo.
 # Nặc danh PHẢI bị từ chối
 mosquitto_pub -h <broker> -t 'drv/bat-ky/loc' -m '{}' ; echo "mã thoát: $?"   # khác 0 là đúng
 
-# Ba bất biến, chạy trên hạ tầng thật
+# Bốn bất biến, chạy trên hạ tầng thật
 TEST_MQTT_URL=tcp://<broker>:1883 TEST_API_URL=http://<api> \
 TEST_MQTT_USERNAME=... TEST_MQTT_PASSWORD=... \
-  go test ./internal/app/ -run 'TestDriverCannotPublish|TestCannotConnect|TestCannotHijack' -v
+  go test ./internal/app/ -run 'TestDriverCannotPublish|TestCannotConnect|TestCannotHijack|TestRiderReceives' -v
 ```
 
 Test tự dừng với thông báo rõ ràng nếu broker vẫn đang mở — không có chuyện nó xanh một cách vô
@@ -579,3 +581,33 @@ nghĩa vì chẳng có gì được bật.
 > **Hai endpoint `/internal/mqtt/*` không có middleware xác thực** — chính chúng là cửa xác thực,
 > và người gọi là broker chứ không phải người dùng. Phải chặn ở tầng mạng: chỉ broker mới gọi tới
 > được. Mở chúng ra Internet là biến chúng thành công cụ dò tài khoản.
+
+---
+
+## 8.13 Chiều xuống realtime
+
+Từ T-31, máy chủ đẩy lời mời, trạng thái chuyến và vị trí tài xế xuống thiết bị qua MQTT. Topic và
+định dạng tin: [04 — Chiều xuống realtime](04-api-reference.md#chiều-xuống-realtime-mqtt--t-31).
+
+**Đường đi của một tin:**
+
+```
+trip.Service.apply ─(cùng transaction)→ outbox ─relay→ bus "trip.status_changed"
+                                                         └─ consumer "push-trip" → MQTT rdr/{id}/trip + drv/{id}/trip
+matching.DispatchRound → bus "offer.created" ─ consumer "push-offer" → MQTT drv/{id}/offer
+location.Ingest (ping hợp lệ, tài xế có khách) ─ gọi thẳng ─→ MQTT rdr/{id}/driver_loc   (không qua bus)
+```
+
+- **Không có `MQTT_URL` thì không đẩy gì cả**, log ghi một cảnh báo lúc khởi động. Mọi thứ vẫn chạy
+  đúng — thiết bị chỉ chậm hơn vì phải hỏi.
+- **Vị trí tài xế không qua bus** là cố ý: 4 giây một ping, bản mới thay bản cũ, giao lại bản cũ vô ích.
+  Mỗi ping của tài xế đang có khách tốn thêm **một truy vấn** `ActiveByDriver` (chỉ mục
+  `trips_driver_idx`). Không nhớ đệm: bộ đệm sai đúng lúc tài xế chuyển sang chuyến kế tiếp, và
+  khách cũ sẽ thấy tài xế chạy đi đón người khác.
+- **Trùng tin là bình thường** — bus at-least-once. Thiết bị tự bỏ qua theo `updated_at`.
+
+> **Bẫy khi chạy test tích hợp:** backend dùng cho `TEST_API_URL` **không được dùng chung NATS** với
+> `TEST_NATS_URL`. Các test NATS xoá stream `GODRIVE` để bắt đầu sạch, và consumer `push-trip` của
+> backend đang chạy chết theo — `TestRiderReceivesOwnTripPushOverBroker` đỏ khi chạy cả gói nhưng
+> xanh khi chạy riêng. Cho backend đó chạy không có `NATS_URL` (bus trong tiến trình + outbox), hoặc
+> trỏ vào một NATS khác.
