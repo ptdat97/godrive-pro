@@ -28,7 +28,7 @@ func TestAlertLevelsAndOrder(t *testing.T) {
 	for _, c := range []struct {
 		until string
 		days  int
-		level string // rỗng = không cảnh báo
+		level DocumentAlertLevel // rỗng = không cảnh báo
 	}{
 		{"2026-09-30", -1, AlertExpired},
 		{"2026-10-01", 0, AlertUrgent},

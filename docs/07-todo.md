@@ -6,7 +6,7 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ (T-01…T-28):** **24 / 28 xong** · 🟡 T-21, T-24 xong một phần · chưa làm T-11, T-23 — đếm lại 2026-10-27 theo dấu ở từng mục
+**Tiến độ (T-01…T-28):** **25 / 28 xong** · 🟡 T-21, T-24 xong một phần · chưa làm T-11 (trùng T-33, cần credential FCM/APNs) — đếm lại 2026-10-27 theo dấu ở từng mục
 
 | GĐ | Xong | Còn |
 |---|---|---|
@@ -14,7 +14,7 @@
 | GĐ 1 — Bền dữ liệu & đúng tiền | ✅ T-02, T-03, T-05, T-09, T-12, T-13, T-18 | — |
 | GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
 | GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
-| GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · ✅ T-26 · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC chưa) | T-23 |
+| GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · ✅ T-23 · ✅ T-26 · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC chưa) | — |
 | Chưa xếp | ✅ T-27 (quyền CSDL + trigger + tự kiểm lúc khởi động) · ✅ T-28 | — |
 | Trước app | ✅ T-32 · ✅ T-31 (lời mời p95 5–16 ms, đo ở T-35) | T-33 (cần credential FCM/APNs) |
 
@@ -410,13 +410,23 @@ go test ./internal/payment/... -run TestWebhookRejectsBadSignature
 
 ---
 
-### <a id="t-23"></a>T-23 · Sinh kiểu TypeScript từ struct Go `P2`
+### <a id="t-23"></a>T-23 · ✅ Sinh kiểu TypeScript từ struct Go `P2`
 
-- [ ] `godrive-admin/src/lib/types.ts` đang **chép tay** từ `internal/admin/domain.go` → sẽ trôi khỏi nhau
-- [ ] Sinh tự động (`tygo` hoặc OpenAPI spec + `openapi-typescript`)
-- [ ] Kiểm tra trong CI: sinh lại → `git diff` phải rỗng
+- [x] `godrive-admin/src/lib/types.ts` giờ **sinh tự động** bằng [cmd/gentypes](../godrive/cmd/gentypes):
+      hình dạng struct đọc bằng reflection (đúng thứ `encoding/json` dùng — tên trường, `omitempty`,
+      struct nhúng), chú thích và giá trị enum đọc từ mã nguồn bằng `go/ast`
+- [x] Tự viết thay vì `tygo`/OpenAPI: không thêm phụ thuộc, và giữ được enum dạng union
+      (`"PENDING" | "APPROVED"`) — `tygo` sinh chúng thành `string` trơn
+- [x] Kiểm trong `go test ./...`: `TestGeneratedTypesUpToDate` so tệp trên đĩa với kết quả sinh lại.
+      Repo chưa có CI, nên chốt chặn nằm ở bộ test mà mọi người vẫn chạy
 
-**Verify** — `make gen-types && git diff --exit-code godrive-admin/src/lib/types.ts`
+**Bản chép tay đã trôi thật** — lần sinh đầu tiên lộ ra: `DriverRow` thiếu `cancel_rate`,
+`rating_count`, `idle_since`; `TokenPair.account` có thể là `null` nhưng TS ghi là luôn có; `level`,
+`role`, `key` là chuỗi trơn thay vì union. Giao diện vẫn biên dịch sạch sau khi thay.
+
+**Verify** — `make gen-types && git diff --exit-code godrive-admin/src/lib/types.ts` ·
+`TestGeneratedTypesUpToDate` · `TestGenerateIsDeterministic`. Kiểm ngược: thêm một trường vào
+`admin.Alert` mà không sinh lại → test đỏ.
 
 ---
 

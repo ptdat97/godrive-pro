@@ -1,12 +1,23 @@
-// Kiểu dữ liệu khớp JSON trả về từ API Go (internal/admin/domain.go).
-// Đây chỉ là mô tả hình dạng dữ liệu — mọi logic nghiệp vụ nằm ở godrive.
+// ĐÂY LÀ TỆP SINH TỰ ĐỘNG — ĐỪNG SỬA TAY.
+//
+// Sinh từ struct Go mà API trả về, bằng godrive/cmd/gentypes:
+//
+//     cd godrive && make gen-types
+//
+// Sửa tay sẽ bị ghi đè, và TestGeneratedTypesUpToDate (chạy trong go test)
+// báo đỏ khi tệp này lệch với Go. Muốn đổi hình dạng dữ liệu thì đổi struct Go.
 
-export type DriverStatus =
-  "OFFLINE" | "IDLE" | "ASSIGNED" | "ON_TRIP" | "SUSPENDED";
+export type DriverStatus = "OFFLINE" | "IDLE" | "ASSIGNED" | "ON_TRIP" | "SUSPENDED";
 
 export type KYCState = "PENDING" | "APPROVED" | "REJECTED";
 
 export type VehicleType = "BIKE" | "CAR_4" | "CAR_7";
+
+/** DocumentKind là loại giấy tờ có thời hạn. */
+export type DocumentKind = "insurance" | "license" | "inspection";
+
+/** DocumentAlertLevel là mức cảnh báo, theo số ngày còn lại. */
+export type DocumentAlertLevel = "expired" | "urgent" | "soon" | "notice";
 
 export type TripStatus =
   | "CREATED"
@@ -21,11 +32,36 @@ export type TripStatus =
 
 export type PaymentMethod = "CASH" | "MOMO" | "ZALOPAY" | "VNPAY" | "WALLET";
 
+export type CancelBy = "RIDER" | "DRIVER" | "SYSTEM";
+
+export type AlertLevel = "warn" | "info";
+
+export type Role = "rider" | "driver" | "admin";
+
+/** Kind quyết định giao diện vẽ ô nhập nào và định dạng ra sao. */
+export type SettingKind =
+  | "vnd"
+  | "permille"
+  | "int"
+  | "float"
+  | "bool"
+  | "hour"
+  | "seconds"
+  | "meters"
+  | "surge_steps";
+
+/** Key là tên một nhóm cấu hình. */
+export type SettingKey = "pricing" | "surge" | "matching" | "wallet" | "location";
+
 export interface Point {
   lat: number;
   lng: number;
 }
 
+/**
+ * DriverRow là một dòng trong bảng tài xế. Đã gộp sẵn số dư ví, công nợ tiền
+ * mặt và vị trí — giao diện không phải gọi thêm endpoint nào.
+ */
 export interface DriverRow {
   id: string;
   full_name: string;
@@ -37,23 +73,53 @@ export interface DriverRow {
   status: DriverStatus;
   rating: number;
   acceptance_rate: number;
+  cancel_rate: number;
   completed_trips: number;
+  /**
+   * RatingCount là số lượt đánh giá thật. Rating 5.00 với 0 lượt đánh giá là
+   * giá trị tiền nghiệm, không phải thành tích — giao diện cần phân biệt được.
+   */
+  rating_count: number;
+  idle_since?: string;
   wallet_balance: number;
   cash_on_hand: number;
+  /** InDebt = ví âm quá hạn mức -> bị chặn nhận chuyến. */
   in_debt: boolean;
-  /** Mã lý do tài xế không nhận được chuyến; rỗng nghĩa là nhận được. */
+  /** CanAcceptTrip nêu lý do tài xế không nhận được chuyến (rỗng = nhận được). */
   blocked_reason?: string;
-  /** Hạn giấy tờ, YYYY-MM-DD; rỗng = không có hạn hoặc chưa khai. */
+  /**
+   * DocumentExpiry là ba hạn giấy tờ hiện lưu — để form gia hạn hiện giá trị
+   * đang có. Chỉ ngày tháng, không phải số giấy tờ: số CCCD/GPLX vẫn không
+   * bao giờ ra khỏi API.
+   */
   document_expiry: DocumentExpiry;
-  /** Giấy tờ đã hoặc sắp hết hạn (trong 30 ngày), gấp nhất trước. */
+  /** DocumentAlerts là giấy tờ đã hoặc sắp hết hạn (trong 30 ngày). */
   document_alerts?: DocumentAlert[];
   last_seen?: string;
   position?: Point;
   battery_pc?: number;
+  /** FraudFlags24h là số cờ gian lận trong 24 giờ gần nhất. */
   fraud_flags_24h: number;
   created_at: string;
 }
 
+/** DocumentExpiry là các hạn giấy tờ, YYYY-MM-DD; rỗng = không có hạn / chưa khai. */
+export interface DocumentExpiry {
+  insurance_until: string;
+  license_until: string;
+  inspection_until: string;
+}
+
+/** DocumentAlert là một giấy tờ sắp hoặc đã hết hạn. */
+export interface DocumentAlert {
+  document: DocumentKind;
+  /** YYYY-MM-DD */
+  until: string;
+  days_left: number;
+  level: DocumentAlertLevel;
+}
+
+/** TripRow là một dòng trong bảng chuyến đi. */
 export interface TripRow {
   id: string;
   status: TripStatus;
@@ -70,26 +136,30 @@ export interface TripRow {
   payment_method: PaymentMethod;
   requested_at: string;
   ended_at?: string;
+  /** WaitingSec là thời gian chuyến đã chờ ghép (chỉ có ý nghĩa khi SEARCHING). */
   waiting_sec?: number;
 }
 
+/** Event là bản ghi bất biến của một lần chuyển trạng thái. */
 export interface TripEvent {
   id: string;
   trip_id: string;
   from: TripStatus;
   to: TripStatus;
+  /** account id hoặc "system" */
   actor: string;
   meta?: Record<string, unknown>;
   at: string;
 }
 
 export interface Alert {
-  level: "warn" | "info";
+  level: AlertLevel;
   code: string;
   message: string;
   count: number;
 }
 
+/** Overview là số liệu tổng quan cho trang chủ bảng điều khiển. */
 export interface Overview {
   drivers: {
     online: number;
@@ -111,12 +181,17 @@ export interface Overview {
     driver_earn: number;
     cash_share: number;
   };
+  /** Alerts là những thứ vận hành cần để mắt tới ngay. */
   alerts: Alert[];
-  generated_at: string;
-  /** Mốc tính số liệu "hôm nay": 0 giờ theo giờ Việt Nam. */
+  /**
+   * Since là mốc tính chuyến hoàn tất/huỷ/hết hạn và tiền: 0 giờ hôm nay theo
+   * giờ VN. Chuyến đang chờ ghép và đang chạy là số tức thời, không theo mốc.
+   */
   since: string;
+  generated_at: string;
 }
 
+/** Snapshot là trạng thái mới nhất của tài xế trong chỉ mục. */
 export interface LiveDriver {
   driver_id: string;
   point: Point;
@@ -127,16 +202,18 @@ export interface LiveDriver {
   updated_at: string;
 }
 
-/** Điểm đón đang chờ ghép tài xế — phía "cầu" trên bản đồ. */
+/** PendingPickup là một điểm đón đang chờ ghép tài xế — phía "cầu" trên bản đồ. */
 export interface PendingPickup {
   trip_id: string;
   point: Point;
   address: string;
   vehicle_type: VehicleType;
   fare: number;
+  /** WaitingSec càng lớn càng cần can thiệp. */
   waiting_sec: number;
 }
 
+/** LiveMapResult gộp cung (tài xế) và cầu (điểm đón chờ ghép) cùng một thời điểm. */
 export interface LiveMapResult {
   center: Point;
   radius_m: number;
@@ -145,43 +222,44 @@ export interface LiveMapResult {
   generated_at: string;
 }
 
+/** AuditEntry là một dòng nhật ký thao tác quản trị. Bất biến: chỉ thêm mới. */
+export interface AuditEntry {
+  id: string;
+  actor_id: string;
+  actor_phone?: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  payload?: Record<string, unknown>;
+  at: string;
+}
+
 export interface Account {
   id: string;
+  /** chuẩn hoá E.164: +84... */
   phone: string;
   full_name: string;
-  role: "rider" | "driver" | "admin";
+  role: Role;
   created_at: string;
 }
 
 export interface TokenPair {
   access_token: string;
   expires_at: string;
-  account: Account;
+  account: Account | null;
 }
 
-/** Hình dạng lỗi chuẩn của API: {"code","message","trace_id"}. */
 export interface ApiError {
   code: string;
   message: string;
   trace_id?: string;
 }
 
-// ==== Cấu hình vận hành ====
-
-/** Kiểu ô nhập, do backend quyết định (internal/settings/schema.go). */
-export type SettingKind =
-  | "vnd"
-  | "permille"
-  | "int"
-  | "float"
-  | "bool"
-  | "hour"
-  | "seconds"
-  | "meters"
-  | "surge_steps";
-
+/**
+ * Field mô tả một ô nhập. Path là đường dẫn dấu chấm vào JSON của nhóm,
+ * ví dụ "tariffs.BIKE.per_km".
+ */
 export interface SettingField {
-  /** Đường dẫn dấu chấm vào JSON của nhóm, ví dụ "tariffs.BIKE.per_km". */
   path: string;
   label: string;
   kind: SettingKind;
@@ -190,57 +268,44 @@ export interface SettingField {
   hint?: string;
 }
 
+/** Section gom các ô liên quan lại thành một khối trên giao diện. */
 export interface SettingSection {
   title: string;
   note?: string;
   fields: SettingField[];
 }
 
-/**
- * Một nhóm cấu hình kèm lược đồ biểu mẫu.
- *
- * Nhãn, đơn vị và ngưỡng đều do backend phát ra — giao diện không tự chép lại,
- * nếu không hai bên sẽ trôi khỏi nhau.
- */
+/** GroupView là một nhóm cấu hình kèm lược đồ biểu mẫu, như API trả về. */
 export interface SettingGroup {
-  key: string;
+  key: SettingKey;
   label: string;
   description: string;
-  /** Cảnh báo hệ quả pháp lý hoặc tài chính. Hiện nổi bật trước khi lưu. */
+  /**
+   * Warning hiện nổi bật trên giao diện. Chỉ đặt khi thay đổi có hệ quả
+   * pháp lý hoặc tài chính mà người chỉnh cần biết TRƯỚC khi bấm lưu.
+   */
   warning?: string;
+  /**
+   * Sections là lược đồ biểu mẫu: giao diện vẽ ô nhập từ đây chứ không tự
+   * chép lại nhãn và ngưỡng. Xem schema.go.
+   */
   sections: SettingSection[];
   value: Record<string, unknown>;
   version: number;
   updated_by?: string;
   updated_at?: string;
-  /** true nghĩa là chưa từng lưu, đang chạy bằng giá trị mặc định trong code. */
+  /** IsDefault = true nghĩa là chưa từng lưu, đang chạy bằng giá trị mặc định. */
   is_default: boolean;
 }
 
+/** HistoryEntry là một lần thay đổi. */
 export interface SettingHistoryEntry {
   id: string;
-  key: string;
+  key: SettingKey;
   version: number;
-  /** Vắng ở lần ghi đầu tiên: trước đó nhóm chạy bằng mặc định trong code. */
   old_value?: Record<string, unknown>;
   new_value: Record<string, unknown>;
   changed_by: string;
   reason?: string;
   at: string;
-}
-
-export interface DocumentExpiry {
-  insurance_until: string;
-  license_until: string;
-  inspection_until: string;
-}
-
-export type DocumentKind = "insurance" | "license" | "inspection";
-export type DocumentAlertLevel = "expired" | "urgent" | "soon" | "notice";
-
-export interface DocumentAlert {
-  document: DocumentKind;
-  until: string;
-  days_left: number;
-  level: DocumentAlertLevel;
 }

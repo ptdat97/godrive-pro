@@ -1,4 +1,4 @@
-.PHONY: run worker test test-race test-integration lint fmt vet build migrate-up migrate-down up down tidy infra-up infra-down
+.PHONY: gen-types run worker test test-race test-integration lint fmt vet build migrate-up migrate-down up down tidy infra-up infra-down
 
 APP := godrive
 
@@ -17,6 +17,11 @@ test:
 
 test-race:
 	go test ./... -race -count=1
+
+## Sinh godrive-admin/src/lib/types.ts từ struct Go. TestGeneratedTypesUpToDate
+## (trong `make test`) báo đỏ nếu quên chạy sau khi đổi struct.
+gen-types:
+	go run ./cmd/gentypes
 
 vet:
 	go vet ./...

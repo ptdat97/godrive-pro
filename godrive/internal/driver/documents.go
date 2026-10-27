@@ -6,19 +6,23 @@ import (
 	"github.com/example/godrive/pkg/errs"
 )
 
-// Loại giấy tờ có thời hạn.
+// DocumentKind là loại giấy tờ có thời hạn.
+type DocumentKind string
+
 const (
-	DocInsurance  = "insurance"  // bảo hiểm TNDS bắt buộc
-	DocLicense    = "license"    // GPLX — hạng A1 không có hạn
-	DocInspection = "inspection" // đăng kiểm — chỉ ô tô
+	DocInsurance  DocumentKind = "insurance"  // bảo hiểm TNDS bắt buộc
+	DocLicense    DocumentKind = "license"    // GPLX — hạng A1 không có hạn
+	DocInspection DocumentKind = "inspection" // đăng kiểm — chỉ ô tô
 )
 
-// Mức cảnh báo, theo số ngày còn lại.
+// DocumentAlertLevel là mức cảnh báo, theo số ngày còn lại.
+type DocumentAlertLevel string
+
 const (
-	AlertExpired = "expired" // đã hết hạn: không nhận được chuyến
-	AlertUrgent  = "urgent"  // còn ≤ 7 ngày
-	AlertSoon    = "soon"    // còn ≤ 15 ngày
-	AlertNotice  = "notice"  // còn ≤ 30 ngày
+	AlertExpired DocumentAlertLevel = "expired" // đã hết hạn: không nhận được chuyến
+	AlertUrgent  DocumentAlertLevel = "urgent"  // còn ≤ 7 ngày
+	AlertSoon    DocumentAlertLevel = "soon"    // còn ≤ 15 ngày
+	AlertNotice  DocumentAlertLevel = "notice"  // còn ≤ 30 ngày
 )
 
 // AlertWindowDays là khoảng bắt đầu cảnh báo trước khi hết hạn.
@@ -32,15 +36,15 @@ var vnZone = time.FixedZone("ICT", 7*3600)
 
 // DocumentAlert là một giấy tờ sắp hoặc đã hết hạn.
 type DocumentAlert struct {
-	Document string `json:"document"`
-	Until    string `json:"until"` // YYYY-MM-DD
-	DaysLeft int    `json:"days_left"`
-	Level    string `json:"level"`
+	Document DocumentKind       `json:"document"`
+	Until    string             `json:"until"` // YYYY-MM-DD
+	DaysLeft int                `json:"days_left"`
+	Level    DocumentAlertLevel `json:"level"`
 }
 
 // expiries liệt kê các hạn đã khai. Hạn trống bị bỏ qua: xem migration 0011.
-func (d Documents) expiries() map[string]string {
-	return map[string]string{
+func (d Documents) expiries() map[DocumentKind]string {
+	return map[DocumentKind]string{
 		DocInsurance: d.InsuranceUntil, DocLicense: d.LicenseUntil, DocInspection: d.InspectionUntil,
 	}
 }
@@ -54,7 +58,7 @@ func (d Documents) expiries() map[string]string {
 func (d Documents) Alerts(now time.Time) []DocumentAlert {
 	today := dateOf(now.In(vnZone))
 	var out []DocumentAlert
-	for _, kind := range []string{DocInsurance, DocLicense, DocInspection} {
+	for _, kind := range []DocumentKind{DocInsurance, DocLicense, DocInspection} {
 		s := d.expiries()[kind]
 		if s == "" {
 			continue
@@ -88,7 +92,7 @@ func (d Documents) Expired(now time.Time) bool {
 	return false
 }
 
-func alertLevel(days int) string {
+func alertLevel(days int) DocumentAlertLevel {
 	switch {
 	case days < 0:
 		return AlertExpired

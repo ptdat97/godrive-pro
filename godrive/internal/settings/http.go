@@ -76,7 +76,8 @@ var groupMetas = map[Key]groupMeta{
 	},
 }
 
-type groupView struct {
+// GroupView là một nhóm cấu hình kèm lược đồ biểu mẫu, như API trả về.
+type GroupView struct {
 	groupMeta
 	// Sections là lược đồ biểu mẫu: giao diện vẽ ô nhập từ đây chứ không tự
 	// chép lại nhãn và ngưỡng. Xem schema.go.
@@ -89,12 +90,12 @@ type groupView struct {
 	IsDefault bool `json:"is_default"`
 }
 
-func (h *Handler) viewFor(r *http.Request, k Key) (groupView, error) {
+func (h *Handler) viewFor(r *http.Request, k Key) (GroupView, error) {
 	rec, err := h.svc.Get(r.Context(), k)
 	if err != nil {
-		return groupView{}, err
+		return GroupView{}, err
 	}
-	v := groupView{
+	v := GroupView{
 		groupMeta: groupMetas[k], Sections: SchemaFor(k),
 		Value: rec.Value, Version: rec.Version,
 		UpdatedBy: rec.UpdatedBy, IsDefault: rec.Version == 0,
@@ -106,7 +107,7 @@ func (h *Handler) viewFor(r *http.Request, k Key) (groupView, error) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	out := make([]groupView, 0, len(AllKeys))
+	out := make([]GroupView, 0, len(AllKeys))
 	for _, k := range AllKeys {
 		v, err := h.viewFor(r, k)
 		if err != nil {
