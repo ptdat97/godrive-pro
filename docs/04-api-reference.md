@@ -46,7 +46,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 
 ---
 
-## 4.2 Bảng endpoint đầy đủ (57 route)
+## 4.2 Bảng endpoint đầy đủ (59 route)
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
@@ -70,6 +70,8 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `POST` | `/v1/payments/webhook/{provider}` | **công khai** | xác thực bằng **chữ ký HMAC**, không phải bằng token |
 | **Ví tài xế** ||||
 | `GET` | `/v1/drivers/me/wallet` | `driver` | `wallet.wallet` |
+| `POST` | `/v1/devices` | `rider`+`driver` | `notification.register` — `{token, platform: "android"\|"ios"}`. Gọi sau đăng nhập và mỗi lần FCM đổi token. Một máy (`did` trong phiên) giữ đúng một token |
+| `DELETE` | `/v1/devices/current` | `rider`+`driver` | `notification.forget` — gỡ token của máy này. `POST /v1/auth/logout` cũng tự gỡ |
 | `GET` | `/v1/places/autocomplete` | `rider`+`driver` | `places.autocomplete` — `q` (≥ 2 ký tự, ngắn hơn trả rỗng mà không gọi Goong), `lat`/`lng` tuỳ chọn để ưu tiên gần → `{suggestions:[{place_id,title,address}]}` |
 | `GET` | `/v1/places/{id}` | `rider`+`driver` | `places.detail` — toạ độ của một gợi ý → `{place_id,name,address,point}` |
 | `GET` | `/v1/places/reverse` | `rider`+`driver` | `places.reverse` — `lat`,`lng` → địa chỉ để hiện tên điểm đón |
@@ -495,3 +497,16 @@ chốt hai chiều: `TestSchemaPathsExistInDefaults` (lược đồ không trỏ
 Kiểm tra ngưỡng ở trình duyệt chỉ để **báo sớm** — nút lưu mờ đi khi có ô ngoài ngưỡng, nhưng máy
 chủ vẫn kiểm lại toàn bộ. Lịch sử thay đổi được so trực tiếp trên giao diện và chỉ hiện những ô thật
 sự đổi, dịch đường dẫn JSON sang nhãn tiếng Việt lấy từ chính lược đồ đó.
+
+### Thông báo đẩy (FCM) — T-33
+
+Gửi SONG SONG với MQTT: MQTT tới app đang mở, thông báo đẩy đánh thức máy đang tắt màn hình. App nhận
+cả hai thì bỏ trùng theo mã trong `data`.
+
+| `data.type` | Tới ai | Khi nào | Ghi chú |
+|---|---|---|---|
+| `offer` | tài xế | có lời mời | **gấp**, sống tới đúng hạn lời mời (≤ 15 giây) — hết hạn thì FCM bỏ, không tới muộn |
+| `trip` | khách | ASSIGNED · ARRIVED · COMPLETED · EXPIRED · tài xế huỷ | `data.status`; ARRIVED và huỷ là **gấp** |
+| `trip` | tài xế | khách huỷ chuyến đã ghép | |
+| `refund` | khách | tiền hoàn đã vào ví | `data.refund_id`; nội dung là lý do vận hành đã nhập |
+

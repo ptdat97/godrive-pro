@@ -42,6 +42,7 @@ type appMetrics struct {
 
 	pushes         *metrics.Counter // theo loại tin và kết quả
 	places         *metrics.Counter // theo loại tra cứu và có trúng cache không
+	notify         *metrics.Counter // kết quả gửi thông báo đẩy
 	offerPushDelay *metrics.Histogram
 }
 
@@ -67,6 +68,8 @@ func newAppMetrics() *appMetrics {
 			"số lần ghi sổ cái, theo kết quả"),
 		settleErrors: metrics.NewCounter(r, "godrive_settle_errors_total",
 			"số lần ghi sổ chuyến thất bại"),
+		notify: metrics.NewCounter(r, "godrive_notify_total",
+			"số lần gửi thông báo đẩy tới một máy, theo kết quả (ok|gone|retry|error)"),
 		places: metrics.NewCounter(r, "godrive_places_lookups_total",
 			"số lần tra địa điểm, theo loại (autocomplete|detail|reverse) và cache (hit|miss) — miss là một lượt Goong tính tiền"),
 		pushes: metrics.NewCounter(r, "godrive_push_total",

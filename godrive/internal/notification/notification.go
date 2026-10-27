@@ -10,6 +10,7 @@ package notification
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 type Message struct {
@@ -17,6 +18,13 @@ type Message struct {
 	Title string
 	Body  string
 	Data  map[string]string
+	// TTL > 0: quá hạn mà máy chưa nhận thì FCM bỏ luôn. Lời mời sống 15
+	// giây — tới tay tài xế sau 2 phút là bắt họ bấm vào thứ đã chết.
+	TTL time.Duration
+	// Urgent: đánh thức máy ngay (Android priority HIGH, APNs priority 10).
+	// Chỉ dùng cho tin cần hành động tức thì; lạm dụng thì hệ điều hành hạ
+	// mức ưu tiên của cả app.
+	Urgent bool
 }
 
 type Pusher interface {

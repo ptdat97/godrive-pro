@@ -84,6 +84,13 @@ type Config struct {
 	GoongAPIKey string
 	// GoongURL đổi được để test trỏ vào máy chủ giả.
 	GoongURL string
+
+	// FCMCredentialsFile là đường dẫn tệp service account JSON của Firebase
+	// (T-33). Rỗng = vẫn nhận đăng ký token, chỉ chưa gửi. Là BÍ MẬT: mount
+	// từ kho bí mật, không đặt trong ảnh container.
+	FCMCredentialsFile string
+	// FCMURL đổi được để test trỏ vào máy chủ giả.
+	FCMURL string
 }
 
 func Load() (Config, error) {
@@ -112,6 +119,9 @@ func Load() (Config, error) {
 		RateLimitBurst: getInt("RATE_LIMIT_BURST", 60),
 		GoongAPIKey:    get("GOONG_API_KEY", ""),
 		GoongURL:       get("GOONG_URL", "https://rsapi.goong.io"),
+
+		FCMCredentialsFile: get("FCM_CREDENTIALS_FILE", ""),
+		FCMURL:             get("FCM_URL", "https://fcm.googleapis.com"),
 
 		MoMoPartnerCode: get("MOMO_PARTNER_CODE", ""),
 		MoMoAccessKey:   get("MOMO_ACCESS_KEY", ""),

@@ -54,6 +54,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `SHUTDOWN_WAIT` | `15s` | thời gian tắt êm |
 | `DATA_RESIDENCY` | `VN` | ghi chú tuân thủ NĐ 13/2023 |
 | **`ADMIN_PHONES`** | *(rỗng)* | danh sách SĐT được vào bảng điều khiển, ngăn cách bằng dấu phẩy. **Rỗng = không ai vào được** |
+| `FCM_CREDENTIALS_FILE` | *(rỗng)* | đường dẫn tệp service account JSON của Firebase — bật thông báo đẩy (T-33). **Bí mật**: mount từ kho bí mật, không đặt trong ảnh container. Rỗng ⇒ vẫn nhận đăng ký token, chỉ chưa gửi |
 | `GOONG_API_KEY` | *(rỗng)* | bật tìm địa điểm (T-38). Rỗng ⇒ `/v1/places/*` trả 503, app chọn điểm trên bản đồ. **Bí mật.** Lần đầu bật: chạy `TestGoongLive` ([§8.15](#815-tìm-địa-điểm-goong)) |
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `30` / `60` | hạn mức request mỗi IP. Nhiều thuê bao di động VN ra Internet qua NAT nhà mạng — một IP có thể là hàng trăm người; theo dõi tỉ lệ `429` sau khi ra mắt. Bộ sinh tải cần đặt rất lớn |
 | **`DOCUMENTS_KEY`** | *(rỗng)* | Khoá AES-256 (32 byte hex hoặc base64) mã hoá CCCD/GPLX. Rỗng ⇒ lưu **thô**. Sinh: `openssl rand -hex 32` |
@@ -766,4 +767,26 @@ thật (tìm "Chợ Bến Thành", lấy toạ độ, đổi toạ độ ra đ�
 |---|---|
 | tỉ lệ `miss` tăng đột biến | cache Redis mất dữ liệu, hoặc có ai đó gọi API với từ khoá ngẫu nhiên — xem log theo IP/tài khoản |
 | `places_bad_status` trong log | sai key hoặc hết hạn mức của Goong |
+
+---
+
+## 8.16 Thông báo đẩy (FCM)
+
+**Bật lần đầu:**
+
+1. Tạo project Firebase, thêm app Android và iOS.
+2. iOS: tải **khoá APNs** (.p8) lên Firebase → Project settings → Cloud Messaging. Không có bước này
+   thì FCM nhận tin cho iOS nhưng không giao được.
+3. Tạo service account có quyền *Firebase Cloud Messaging API Admin*, tải tệp JSON, đặt đường dẫn vào
+   `FCM_CREDENTIALS_FILE`. Tệp sai định dạng thì tiến trình **không khởi động** — lỗi lộ ngay, không
+   phải lúc tài xế lỡ chuyến.
+4. Đăng ký một máy thật qua app, đặt một chuyến thử, xác nhận máy nhận được thông báo.
+
+Client FCM mới chỉ thử với máy chủ giả (kiểm cả chữ ký JWT); bước 4 là lần đầu nó gặp Google thật.
+
+| Số liệu | Cảnh báo khi |
+|---|---|
+| `godrive_notify_total{result="retry"}` | tăng đều — FCM chập chờn hoặc hết hạn mức; bus đang giao lại |
+| `godrive_notify_total{result="error"}` | **> 0** — FCM từ chối nội dung tin; xem log `FCM từ chối tin` để sửa mẫu |
+| `godrive_notify_total{result="gone"}` | tăng vọt — nhiều người gỡ app, hoặc project Firebase của app khác với project của backend |
 

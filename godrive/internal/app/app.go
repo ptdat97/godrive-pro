@@ -62,6 +62,9 @@ type App struct {
 	Refunds *refund.Service
 	// Places là tìm địa điểm qua Goong, có cache phía trước (T-38).
 	Places *places.Service
+	// Notifier gửi thông báo đẩy qua FCM (T-33). Luôn khác nil; chưa có
+	// FCM_CREDENTIALS_FILE thì chỉ lưu token, chưa gửi.
+	Notifier *notification.Notifier
 	// Settlement khác nil ở chế độ Postgres. Đối soát và chi trả cần bảng
 	// settlement_batches để chống trả tiền hai lần.
 	Settlement *wallet.Settlement
@@ -329,6 +332,27 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	}
 	placesSvc := places.NewService(placesProvider, placesCache)
 
+	var deviceStore notification.DeviceStore = notification.NewMemoryDeviceStore()
+	if db != nil {
+		deviceStore = notification.NewPostgresDeviceStore(db)
+	}
+	var sender notification.Sender
+	if cfg.FCMCredentialsFile != "" {
+		sa, err := notification.LoadServiceAccount(cfg.FCMCredentialsFile)
+		if err != nil {
+			return nil, err
+		}
+		fcm, err := notification.NewFCM(sa, cfg.FCMURL)
+		if err != nil {
+			return nil, err
+		}
+		sender = fcm
+	} else if !cfg.InMemory() {
+		log.Warn("chưa cấu hình FCM_CREDENTIALS_FILE: không gửi thông báo đẩy — " +
+			"tài xế tắt màn hình sẽ không biết có chuyến")
+	}
+	notifier := notification.NewNotifier(deviceStore, sender, clk, log)
+
 	adminAuth := admin.NewAuth(identitySvc, cfg.AdminPhones)
 	if !adminAuth.Enabled() {
 		log.Warn("chưa cấu hình ADMIN_PHONES: bảng điều khiển vận hành sẽ từ chối mọi đăng nhập")
@@ -338,7 +362,7 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		Cfg: cfg, Log: log, Clock: clk, Bus: bus, Issuer: issuer,
 		Identity: identitySvc, Drivers: driverSvc, Location: locSvc,
 		Pricing: pricingSvc, Trips: tripSvc, Wallet: walletSvc, Matcher: matcher,
-		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Refunds: refundSvc, Places: placesSvc, Settlement: settlement,
+		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Refunds: refundSvc, Places: placesSvc, Notifier: notifier, Settlement: settlement,
 		Surge: surge, Outbox: obx, adminAuth: adminAuth,
 		Redis: rdb, Revoker: revoker, Metrics: newAppMetrics(),
 		db: db,
@@ -361,6 +385,11 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	if err := settingsSvc.Reload(context.Background()); err != nil {
 		log.Warn("chưa nạp được cấu hình, tạm dùng giá trị mặc định", "err", err)
 	}
+
+	app.Notifier.OnSend = func(result string) {
+		app.Metrics.notify.Inc(metrics.Labels{"result": result})
+	}
+	app.Refunds.OnPosted = app.notifyRefund
 
 	app.Places.OnLookup = func(kind string, hit bool) {
 		c := "miss"
@@ -427,7 +456,20 @@ func (a *App) Router() http.Handler {
 	mqttSvc.UseRiderTrips(a.Trips)
 	mqttauth.NewHandler(mqttSvc, a.Log).Register(mux)
 
-	identity.NewHandler(a.Identity, a.Issuer, a.Revoker).Register(mux)
+	idh := identity.NewHandler(a.Identity, a.Issuer, a.Revoker)
+	idh.OnLogout = func(ctx context.Context, c *authn.Claims, all bool) {
+		var err error
+		if all {
+			err = a.Notifier.ForgetAccount(ctx, c.Sub)
+		} else {
+			err = a.Notifier.ForgetDevice(ctx, c.Sub, c.DeviceID)
+		}
+		if err != nil {
+			a.Log.Error("không xoá được token thông báo khi đăng xuất", "account_id", c.Sub, "err", err)
+		}
+	}
+	idh.Register(mux)
+	notification.NewDeviceHandler(a.Notifier, a.Issuer).Register(mux)
 	driver.NewHandler(a.Drivers, a.Issuer).Register(mux)
 	location.NewHandler(a.Location, a.Issuer, a.driverIDFromRequest).Register(mux)
 	pricing.NewHandler(a.Pricing, a.Issuer).Register(mux)

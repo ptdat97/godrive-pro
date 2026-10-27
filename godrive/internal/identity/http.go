@@ -20,6 +20,9 @@ type Handler struct {
 	svc     *Service
 	auth    *authn.Issuer
 	revoker TokenRevoker
+	// OnLogout chạy sau khi thu hồi phiên thành công — để xoá token thông báo
+	// đẩy của máy đó. Lỗi ở đây không làm hỏng việc đăng xuất.
+	OnLogout func(ctx context.Context, c *authn.Claims, allDevices bool)
 }
 
 func NewHandler(s *Service, a *authn.Issuer, r TokenRevoker) *Handler {
@@ -67,6 +70,9 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
+	}
+	if h.OnLogout != nil {
+		h.OnLogout(r.Context(), c, req.AllDevices)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"revoked": true, "all_devices": req.AllDevices})
 }

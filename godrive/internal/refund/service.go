@@ -26,6 +26,9 @@ type Service struct {
 	clk       clock.Clock
 	newID     func(string) string
 	threshold ThresholdProvider
+	// OnPosted chạy sau khi tiền hoàn đã vào sổ — để báo khách. Không chạy
+	// lại khi Approve ghi bù cho khoản đã báo.
+	OnPosted func(ctx context.Context, r *Refund)
 }
 
 func NewService(s Store, t TripPort, l LedgerPort, a Auditor, clk clock.Clock, newID func(string) string) *Service {
@@ -238,10 +241,17 @@ func (s *Service) fillPosted(ctx context.Context, r *Refund) error {
 }
 
 func (s *Service) post(ctx context.Context, r *Refund) error {
+	already, err := s.ledger.RefundPosted(ctx, r.ID)
+	if err != nil {
+		return err
+	}
 	if err := s.ledger.PostRefund(ctx, r.ID, r.RiderID, r.DriverID, r.TripID, r.Amount, r.ChargeTo); err != nil {
 		return err
 	}
 	r.Posted = true
+	if !already && s.OnPosted != nil {
+		s.OnPosted(ctx, r)
+	}
 	return nil
 }
 

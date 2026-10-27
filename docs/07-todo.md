@@ -6,7 +6,7 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ (T-01…T-28):** **25 / 28 xong** · 🟡 T-21, T-24 xong một phần · chưa làm T-11 (trùng T-33, cần credential FCM/APNs) — đếm lại 2026-10-27 theo dấu ở từng mục
+**Tiến độ (T-01…T-28):** **25 / 28 xong** · 🟡 T-21, T-24 xong một phần · 🟡 T-11 (= T-33: code xong, chờ credential FCM) — đếm lại 2026-10-27 theo dấu ở từng mục
 
 | GĐ | Xong | Còn |
 |---|---|---|
@@ -662,17 +662,30 @@ không** chứ không tin mã trả về của lệnh publish. Cộng 13 test đ
 
 ---
 
-### <a id="t-33"></a>T-33 · Thông báo đẩy FCM/APNs `[G-11]` `P0`
+### <a id="t-33"></a>T-33 · 🟡 Thông báo đẩy FCM/APNs `[G-11]` `P0`
 
 Khung `notification.Pusher` có từ đầu nhưng **chưa ai gọi**. Không có push thì tài xế phải mở app
 mới biết có chuyến, và khách không được báo khi tài xế tới nơi.
 
 - [x] ~~Chọn cách gửi~~ → **FCM cho cả Android và iOS** (chốt 2026-10-27): một tích hợp, FCM tự
       chuyển sang APNs khi tải khoá APNs lên Firebase
-- [ ] Nối FCM — *cần project Firebase + service account JSON, và khoá APNs tải lên Firebase*
-- [ ] Bảng `device_tokens`: đăng ký, làm mới, thu hồi khi đăng xuất
-- [ ] Mẫu thông báo: có lời mời · tài xế đã tới · chuyến hoàn tất · thanh toán · kết quả duyệt hồ sơ
-- [ ] Thử lại khi gửi lỗi, dọn token chết
+- [x] Client FCM HTTP v1 tự ký JWT RS256 từ service account (không thêm thư viện Google), cache access
+      token, phân loại lỗi: `UNREGISTERED` → xoá token; 429/5xx → bus giao lại; 400 → bỏ và ghi log
+- [x] Bảng `device_tokens` (migration 0014): một máy giữ đúng một token, máy đổi chủ thì chủ cũ mất token;
+      `POST /v1/devices`, `DELETE /v1/devices/current`; **đăng xuất tự gỡ** token của máy đó
+- [x] Mẫu: có lời mời (gấp, sống tới hạn lời mời) · đã có tài xế · tài xế đã tới · hoàn tất · không tìm được
+      xe · bị huỷ · tiền hoàn đã vào ví. Số liệu `godrive_notify_total{result}`
+- [ ] **Bật thật:** cần project Firebase + tệp service account JSON (`FCM_CREDENTIALS_FILE`), và khoá APNs
+      tải lên Firebase cho iOS. Client mới thử với máy chủ giả
+- [ ] Kết quả duyệt hồ sơ; cảnh báo hạn giấy tờ 30/15/7 ngày (cần job hằng ngày nhớ đã gửi mức nào)
+
+---
+
+**Verify** — `TestFCMSendsSignedRequestWithTTL` (máy chủ giả **kiểm chữ ký JWT** bằng khoá công khai; access
+token dùng lại) · `TestFCMClassifiesErrors` · `TestNotifierCleansDeadTokensAndRetries` ·
+`TestDeviceTokenOwnership` · `TestPostgresDeviceTokenOwnership` · `TestPushNotificationsFollowTrip` ·
+`TestForgottenDeviceGetsNothing` · `TestLogoutForgetsDevice`. Kiểm ngược: bỏ bước gỡ token khi đăng xuất →
+máy đã đăng xuất vẫn nhận, test đỏ.
 
 ---
 

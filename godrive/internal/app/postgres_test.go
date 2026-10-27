@@ -54,7 +54,7 @@ func requireTestDatabase(t *testing.T, dsn string) {
 
 // appTables theo thứ tự xoá an toàn (con trước, cha sau).
 var appTables = []string{
-	"refunds", "trip_events", "offers", "trips", "driver_locations", "drivers",
+	"device_tokens", "refunds", "trip_events", "offers", "trips", "driver_locations", "drivers",
 	"otp_challenges", "accounts", "ledger_entries", "ledger_transactions",
 	"idempotency_keys", "outbox", "admin_audit_log", "trip_claims",
 	"payment_transactions", "settlement_items", "settlement_batches",
