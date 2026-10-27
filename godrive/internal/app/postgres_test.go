@@ -350,6 +350,7 @@ func TestPostgresOTPChallengeRoundTrip(t *testing.T) {
 // về ĐÚNG tài khoản cũ, không tạo tài khoản thứ hai.
 func TestPostgresAccountUpsertIsStable(t *testing.T) {
 	a, db := newPostgresApp(t)
+	a.Identity.UseOTPLimiter(nil) // test đăng nhập lại liền tay; giới hạn OTP có test riêng
 
 	first := login(t, a, "0901112223", authn.RoleRider)
 	second := login(t, a, "0901112223", authn.RoleRider)

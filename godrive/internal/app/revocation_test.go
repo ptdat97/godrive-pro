@@ -15,8 +15,13 @@ import (
 )
 
 // tokenFor đăng nhập và trả về cả token lẫn claims.
+//
+// Tắt giới hạn OTP theo số điện thoại: các test ở đây cố ý đăng nhập nhiều
+// lần liền cùng một số (nhiều máy) để kiểm token, không kiểm việc gửi OTP —
+// thứ đó có test riêng ở otp_limit_test.go.
 func tokenFor(t *testing.T, a *App, phone string, role authn.Role) (string, *authn.Claims) {
 	t.Helper()
+	a.Identity.UseOTPLimiter(nil)
 	ctx := context.Background()
 	cid, code, err := a.Identity.RequestOTP(ctx, phone, role)
 	if err != nil {

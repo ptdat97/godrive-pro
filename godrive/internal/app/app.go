@@ -222,6 +222,11 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	otpSender := notification.LogOTPSender{Log: log}
 	identitySvc := identity.NewService(idRepo, otpSender, issuer, clk)
 	identitySvc.DevMode = cfg.DevAuth
+	if rdb != nil {
+		identitySvc.UseOTPLimiter(identity.NewRedisOTPLimiter(rdb.Raw(), redisx.KeyPrefix, log))
+	} else {
+		identitySvc.UseOTPLimiter(identity.NewMemoryOTPLimiter(clk.Now))
+	}
 
 	driverSvc := driver.NewService(driverRepo, bus, clk)
 	locSvc := location.NewService(locIdx, driverSvc, clk)

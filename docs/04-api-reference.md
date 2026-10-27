@@ -421,6 +421,7 @@ Mã lỗi riêng của nhóm này: `setting_version_conflict` · `setting_reason
 | `not_admin` | forbidden | `admin.Auth` — **thông báo giống hệt mọi trường hợp** |
 | `full_name_required` / `vehicle_type_invalid` / `plate_invalid` / `documents_required` / `insurance_until_invalid` | invalid | `driver.Onboard` |
 | `driver_not_found` / `driver_create_failed` | not_found/conflict | `driver` repo |
+| `otp_rate_limited` | **429** | `POST /v1/auth/otp` cho một số đã xin mã trong 60 giây qua, quá 5 lần/giờ hoặc 10 lần/ngày (tính theo số đã chuẩn hoá, chung mọi vai). Thông báo nêu thời gian phải chờ |
 | `places_unavailable` | **503** | chưa cấu hình `GOONG_API_KEY` — app lùi về chọn điểm trên bản đồ |
 | `wallet_insufficient` | conflict | `POST /v1/trips` với `payment_method: "WALLET"` khi số dư ví không đủ cước |
 | `refund_exceeds_paid` · `trip_not_refundable` · `second_approver_required` · `refund_already_decided` | conflict/forbidden | hoàn tiền (T-36) |

@@ -45,7 +45,11 @@ type Service struct {
 	clk    clock.Clock
 	// DevMode trả mã OTP thẳng trong response để test — PHẢI tắt ở production.
 	DevMode bool
+	limiter OTPLimiter
 }
+
+// UseOTPLimiter bật giới hạn gửi OTP theo số điện thoại.
+func (s *Service) UseOTPLimiter(l OTPLimiter) { s.limiter = l }
 
 func NewService(repo Repository, sender OTPSender, issuer *authn.Issuer, clk clock.Clock) *Service {
 	return &Service{repo: repo, sender: sender, issuer: issuer, clk: clk}
@@ -56,6 +60,17 @@ func (s *Service) RequestOTP(ctx context.Context, rawPhone string, role authn.Ro
 	phone, err := NormalizePhone(rawPhone)
 	if err != nil {
 		return "", "", err
+	}
+	// Kiểm theo số ĐÃ CHUẨN HOÁ: "0901…" và "+84901…" là cùng một máy, cùng
+	// một người bị dội tin.
+	if s.limiter != nil {
+		wait, err := s.limiter.Allow(ctx, phone)
+		if err != nil {
+			return "", "", err
+		}
+		if wait > 0 {
+			return "", "", errOTPLimited(wait)
+		}
 	}
 	code, err := randomCode(6)
 	if err != nil {
@@ -123,6 +138,11 @@ func (s *Service) GetAccount(ctx context.Context, accountID string) (*Account, e
 // Worker nền gọi định kỳ. VerifyOTP đã xoá thử thách nó chạm tới; hàm này lo
 // những cái không ai quay lại xác thực.
 func (s *Service) SweepExpiredChallenges(ctx context.Context) (int, error) {
+	// Bộ giới hạn bộ nhớ giữ một mục cho mỗi số từng xin mã; dọn cùng nhịp
+	// để nó không phình theo số người từng đăng nhập. Bản Redis tự hết hạn.
+	if sw, ok := s.limiter.(interface{ Sweep() }); ok {
+		sw.Sweep()
+	}
 	return s.repo.DeleteExpiredChallenges(ctx, s.clk.Now())
 }
 

@@ -124,7 +124,7 @@ Chi tiết chẩn đoán từng gap giữ nguyên trong lịch sử git của t�
 | <a id="g-18"></a>**G-18** | `SUSPENDED` chỉ được đọc, không có đường nào đặt nó | Cần chính sách ngưỡng gian lận — **GĐ 4**, và là quyết định vận hành chứ không phải kỹ thuật |
 | <a id="g-20"></a>**G-20** | `candidates()` gọi `drivers.Get()` cho từng ứng viên (N+1) | Đi cùng OSRM `/table` — **GĐ 3** |
 | <a id="g-21"></a>**G-21** | JWT không thu hồi được; đăng xuất chỉ xoá cookie | Cần refresh token + danh sách chặn Redis — **GĐ 4** |
-| <a id="g-22"></a>**G-22** | Rate limit OTP theo IP, chưa theo số điện thoại | Cần Redis để giới hạn toàn cụm — **GĐ 3** |
+| <a id="g-22"></a>**G-22** | ✅ Rate limit OTP theo IP, chưa theo số điện thoại | **Đã sửa 2026-10-27:** giới hạn theo số đã chuẩn hoá, chung mọi vai — cách 60 giây, ≤ 5/giờ, ≤ 10/ngày; một script Lua trên Redis cho toàn cụm. `TestOTPLimitedPerPhone` · `TestRedisOTPLimitAcrossPods` |
 | <a id="g-25"></a>**G-25** | Không metric, không tracing, `/healthz` không kiểm DB | **GĐ 3** |
 | <a id="g-26"></a>**G-26** | CCCD/GPLX lưu plaintext | Cần quyết định về quản lý khoá — **GĐ 4** |
 

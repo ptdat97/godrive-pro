@@ -913,7 +913,7 @@ Cần dữ liệu chuyến thật mới có ý nghĩa — xếp sau pilot.
 | [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | ✅ xong | 4 |
 | [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) · [T-35](#t-35) | P1 | 3 | ✅ ETA theo lô; số lần tra bị chặn bởi `max_candidates` (người gần nhất trước). Vẫn tra từng người một, nhưng tối đa 40 |
 | [G-21](05-doi-chieu-spec-code.md#g-21) token không thu hồi | [T-24](#t-24) | P2 | 4 | ✅ xong |
-| [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | P1 | 3 | 🟡 rate limit đã toàn cụm; chưa giới hạn riêng theo SĐT |
+| [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | ✅ xong | 3 | theo SĐT đã chuẩn hoá, chung mọi vai: cách 60 giây, ≤ 5/giờ, ≤ 10/ngày; toàn cụm qua Redis |
 | [G-23](05-doi-chieu-spec-code.md#g-23) trường chết ở pricing | [T-18](#t-18) | P2 | 1 |
 | [G-24](05-doi-chieu-spec-code.md#g-24) ActiveByDriver chết | [T-12](#t-12) | P2 | 1 |
 | [G-25](05-doi-chieu-spec-code.md#g-25) không quan sát được | [T-25](#t-25) | P1 | 3 | ✅ xong (trừ tracing) |
