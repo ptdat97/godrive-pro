@@ -720,13 +720,30 @@ Mọi ngưỡng hiệu năng trong tài liệu (`API p95 < 100ms`, `offer delive
 
 ---
 
-### <a id="t-36"></a>T-36 · Hoàn tiền và chốt sổ ngày `P1` `tiền`
+### <a id="t-36"></a>T-36 · 🟡 Hoàn tiền và chốt sổ ngày `P1` `tiền`
 
 Đường tiền vào đã chắc, **đường tiền ra chưa đủ**:
 
-- [ ] Hoàn tiền (huỷ sau khi đã thu, khiếu nại được duyệt) — bút toán đảo, không sửa bút toán cũ.
-      **Chốt 2026-10-27:** hoàn **về ví GoDrive** của khách, **hai cấp duyệt** — dưới ngưỡng (gợi ý
-      50.000đ, chỉnh được) một vận hành tự duyệt; trên ngưỡng cần người thứ hai duyệt
+- [x] **Hoàn tiền** (chốt 2026-10-27: về ví GoDrive, hai cấp duyệt) — module [internal/refund](../godrive/internal/refund):
+  - bút toán đảo mới `tx_refund_<id>`, không sửa bút toán cũ; mỗi lần hoàn chọn **ai chịu**: nền tảng
+    (giảm doanh thu) hoặc trừ lại tài xế
+  - đến ngưỡng `wallet.refund_self_approve_max_vnd` (mặc định 50.000đ, sửa ở trang cấu hình) thì tự
+    duyệt; cao hơn cần người thứ hai — chốt ở **cả service lẫn CHECK của CSDL**
+  - không hoàn quá số khách đã trả (cước, hoặc phí huỷ với chuyến huỷ), tính dồn mọi khoản chưa bị từ
+    chối, **nguyên tử** bằng khoá dòng chuyến
+  - mọi bước vào nhật ký quản trị; trang **Hoàn tiền** + form ở trang chi tiết chuyến
+- [x] **Ví khách tiêu được** — điều kiện để "hoàn về ví" có nghĩa. Trước đây chuyến `WALLET` ghi sổ
+      như trả qua cổng, ví khách không bao giờ bị trừ. Nay: kiểm số dư lúc đặt (`wallet_insufficient`),
+      trừ ví khi hoàn tất, `GET /v1/riders/me/wallet`
+
+**Verify (hoàn tiền)** — `TestSmallRefundIsSelfApprovedAndCredited` · `TestLargeRefundNeedsSecondApprover`
+(người xin không tự duyệt được; bấm duyệt hai lần không hoàn hai lần) · `TestRefundCannotExceedFare` ·
+`TestRefundChargedToDriver` · `TestRefundCancelFee` · `TestRefundRejectsUnfinishedTrip` ·
+`TestRefundedBalancePaysNextTrip` · `TestPostgresConcurrentRefundsCannotExceedFare` (10 yêu cầu nửa cước
+cùng lúc → đúng 2; và CSDL chặn câu SQL tự duyệt chạy tay). Kiểm ngược: bỏ khoá dòng chuyến → lọt 5
+khoản (2,5 lần cước); bỏ nhánh ghi sổ chuyến ví → ví khách không bị trừ. Đã chạy trọn luồng qua HTTP và
+giao diện thật.
+
 - [ ] Chốt sổ cuối ngày: tổng thu, chiết khấu, thuế, phải trả tài xế
 - [ ] Đối soát tự động với sao kê cổng thanh toán, nêu ra dòng lệch
 - [ ] Báo cáo kiểm toán tài chính xuất được cho kế toán

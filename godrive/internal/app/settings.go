@@ -90,6 +90,10 @@ func (a *App) wireSettings() {
 		return s.Current(ctx).Wallet.TaxPermille
 	})
 
+	a.Refunds.UseThreshold(func(ctx context.Context) money.VND {
+		return money.VND(s.Current(ctx).Wallet.RefundSelfApproveMaxVND)
+	})
+
 	a.Location.UseThresholds(func(ctx context.Context) location.Thresholds {
 		g := s.Current(ctx).Location
 		return location.Thresholds{

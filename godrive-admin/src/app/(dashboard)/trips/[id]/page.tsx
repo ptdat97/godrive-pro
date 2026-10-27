@@ -12,7 +12,9 @@ import {
   vnd,
 } from "@/lib/format";
 import { Badge, Card, ErrorBox, Stat, tripTone } from "@/components/ui";
-import type { TripEvent, TripRow } from "@/lib/types";
+import type { Refund, TripEvent, TripRow } from "@/lib/types";
+import RefundForm from "../../refunds/refund-form";
+import RefundTable from "../../refunds/refund-table";
 
 export const dynamic = "force-dynamic";
 
@@ -25,14 +27,17 @@ export default async function TripDetailPage({ params }: Props) {
 
   let trip: TripRow;
   let events: TripEvent[] = [];
+  let refunds: Refund[] = [];
   try {
-    // Hai lời gọi độc lập — chạy song song cho nhanh.
-    const [t, evs] = await Promise.all([
+    // Ba lời gọi độc lập — chạy song song cho nhanh.
+    const [t, evs, rfs] = await Promise.all([
       api.get<TripRow>(`/v1/admin/trips/${id}`),
       api.get<{ events: TripEvent[] }>(`/v1/admin/trips/${id}/events`),
+      api.get<{ refunds: Refund[] }>(`/v1/admin/refunds?trip_id=${encodeURIComponent(id)}`),
     ]);
     trip = t;
     events = evs.events ?? [];
+    refunds = rfs.refunds ?? [];
   } catch (err) {
     const e = err as GoDriveError;
     return (
@@ -170,8 +175,21 @@ export default async function TripDetailPage({ params }: Props) {
           </p>
         </Card>
       </div>
+
+      {refundable(trip) && (
+        <Card title="Hoàn tiền">
+          <RefundForm tripId={trip.id} max={trip.fare} />
+          {refunds.length > 0 && <RefundTable rows={refunds} />}
+        </Card>
+      )}
     </div>
   );
+}
+
+// refundable: chuyến đã hoàn tất, hoặc đã huỷ (backend tự kiểm có thu phí huỷ
+// hay không và trần hoàn là bao nhiêu).
+function refundable(t: TripRow): boolean {
+  return t.status === "COMPLETED" || t.status === "PAID" || t.status === "CANCELLED";
 }
 
 function dotColor(status: string): string {

@@ -50,6 +50,68 @@ func SettleOnlineTrip(txID, driverID, tripID string, fare, fee money.VND, at tim
 	}
 }
 
+// SettleWalletTrip: khách trả bằng VÍ GODRIVE (số dư có được từ hoàn tiền).
+//
+//	RIDER_WALLET     -fare      (trừ ví khách)
+//	DRIVER_WALLET    +earn      (ghi có thu nhập tài xế)
+//	PLATFORM_REVENUE +fee
+//
+// Khác SettleOnlineTrip ở chỗ tiền KHÔNG đi qua cổng thanh toán nên không có
+// gì để đối soát với cổng.
+func SettleWalletTrip(txID, riderID, driverID, tripID string, fare, fee money.VND, at time.Time) Transaction {
+	earn := fare - fee
+	return Transaction{
+		ID:      txID,
+		RefType: RefTrip,
+		RefID:   tripID,
+		At:      at,
+		Entries: []Entry{
+			newEntry(txID, riderID, AccRiderWallet, fare.Neg(), RefTrip, tripID, "Trả chuyến bằng ví", at),
+			newEntry(txID, driverID, AccDriverWallet, earn, RefTrip, tripID, "Thu nhập chuyến", at),
+			newEntry(txID, "platform", AccPlatformRev, fee, RefTrip, tripID, "Chiết khấu nền tảng", at),
+		},
+	}
+}
+
+// ChargeTo là bên chịu khoản hoàn tiền.
+type ChargeTo string
+
+const (
+	// ChargePlatform: nền tảng chịu (giá sai, lỗi ứng dụng, thiện chí). Ghi
+	// giảm doanh thu — hoàn tiền là doanh thu không giữ lại được.
+	ChargePlatform ChargeTo = "PLATFORM"
+	// ChargeDriver: trừ lại từ tài xế (đi sai đường, thu quá tiền). Ví tài xế
+	// có thể âm, tức tài xế nợ lại nền tảng như công nợ chiết khấu.
+	ChargeDriver ChargeTo = "DRIVER"
+)
+
+func (c ChargeTo) Valid() bool { return c == ChargePlatform || c == ChargeDriver }
+
+// Refund: hoàn tiền vào ví GoDrive của khách. Là bút toán ĐẢO mới, không sửa
+// bút toán của chuyến — sổ cái chỉ thêm, không bao giờ viết lại.
+//
+//	RIDER_WALLET     +amount
+//	PLATFORM_REVENUE -amount   (nếu nền tảng chịu)
+//	DRIVER_WALLET    -amount   (nếu trừ lại từ tài xế)
+func Refund(txID, refundID, riderID, driverID, tripID string, amount money.VND, by ChargeTo, at time.Time) Transaction {
+	payer := newEntry(txID, "platform", AccPlatformRev, amount.Neg(), RefRefund, refundID,
+		"Hoàn tiền chuyến "+tripID, at)
+	if by == ChargeDriver {
+		payer = newEntry(txID, driverID, AccDriverWallet, amount.Neg(), RefRefund, refundID,
+			"Trừ lại tiền hoàn cho khách, chuyến "+tripID, at)
+	}
+	return Transaction{
+		ID:      txID,
+		RefType: RefRefund,
+		RefID:   refundID,
+		At:      at,
+		Entries: []Entry{
+			newEntry(txID, riderID, AccRiderWallet, amount, RefRefund, refundID, "Hoàn tiền chuyến "+tripID, at),
+			payer,
+		},
+	}
+}
+
 // TopUp: tài xế nạp tiền vào ví (VietQR / MoMo / ZaloPay) để trả công nợ.
 func TopUp(txID, driverID, paymentRef string, amount money.VND, at time.Time) Transaction {
 	return Transaction{

@@ -35,6 +35,7 @@ const (
 	RefPayout    RefType = "PAYOUT"
 	RefAdjust    RefType = "ADJUSTMENT"
 	RefCancelFee RefType = "CANCEL_FEE"
+	RefRefund    RefType = "REFUND"
 )
 
 // Entry là một bút toán. Bảng ledger_entries chỉ INSERT, không UPDATE/DELETE.

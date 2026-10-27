@@ -35,6 +35,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	drv := h.auth.Require(authn.RoleDriver)
 	mux.Handle("GET /v1/drivers/me/wallet", drv(http.HandlerFunc(h.wallet)))
 	mux.Handle("GET /v1/drivers/me/statement", drv(http.HandlerFunc(h.statement)))
+	mux.Handle("GET /v1/riders/me/wallet", h.auth.Require(authn.RoleRider)(http.HandlerFunc(h.riderWallet)))
 
 	// Nạp ví thật phải đi qua cổng thanh toán (webhook có xác thực chữ ký).
 	// Một endpoint tự ghi có vào ví mà không có đối ứng tiền thật chính là máy
@@ -52,6 +53,27 @@ type walletResp struct {
 	InDebt bool `json:"in_debt"`
 	// AmountToClear là số tiền cần nạp để nhận chuyến trở lại (0 nếu không nợ quá hạn).
 	AmountToClear money.VND `json:"amount_to_clear"`
+}
+
+// riderWallet trả số dư ví GoDrive của khách và các bút toán 90 ngày gần nhất
+// — khách thấy được tiền hoàn đã vào và đã tiêu vào chuyến nào.
+func (h *Handler) riderWallet(w http.ResponseWriter, r *http.Request) {
+	rid := authn.MustClaims(r.Context()).Sub
+	bal, err := h.svc.RiderBalance(r.Context(), rid)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	now := h.svc.clk.Now()
+	entries, err := h.svc.Statement(r.Context(), rid, now.AddDate(0, 0, -90), now)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	if entries == nil {
+		entries = []Entry{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"balance": bal, "entries": entries})
 }
 
 func (h *Handler) wallet(w http.ResponseWriter, r *http.Request) {

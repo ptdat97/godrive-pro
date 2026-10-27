@@ -324,12 +324,16 @@ type WalletGroup struct {
 	MinPayoutVND         int64 `json:"min_payout_vnd"`
 	CancelFeeVND         int64 `json:"cancel_fee_vnd"`
 	FreeCancelWindowSecs int   `json:"free_cancel_window_seconds"`
+	// RefundSelfApproveMaxVND: khoản hoàn đến mức này thì người xin tự duyệt
+	// luôn; trên mức này cần người thứ hai (chốt 2026-10-27, T-36).
+	RefundSelfApproveMaxVND int64 `json:"refund_self_approve_max_vnd"`
 }
 
 func DefaultWallet() WalletGroup {
 	return WalletGroup{
 		DebtLimitVND: 200000, TaxPermille: 0, MinPayoutVND: 50000,
 		CancelFeeVND: 10000, FreeCancelWindowSecs: 120,
+		RefundSelfApproveMaxVND: 50000,
 	}
 }
 
@@ -349,6 +353,11 @@ func (w WalletGroup) Validate() error {
 		return err
 	}
 	if err := dur("Cửa sổ huỷ miễn phí", time.Duration(w.FreeCancelWindowSecs)*time.Second, 0, 30*time.Minute); err != nil {
+		return err
+	}
+	// Trần 1 triệu: đặt ngưỡng tự duyệt cao hơn mọi cước thực tế là tắt hẳn
+	// cấp duyệt thứ hai mà không ai để ý.
+	if err := vnd("Ngưỡng tự duyệt hoàn tiền", w.RefundSelfApproveMaxVND, 0, 1000000); err != nil {
 		return err
 	}
 	return nil

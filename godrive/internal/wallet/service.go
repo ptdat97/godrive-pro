@@ -73,6 +73,70 @@ func (s *Service) SettleTrip(ctx context.Context, tripID, driverID string, fare,
 	return nil
 }
 
+// SettleWalletTrip ghi sổ chuyến khách trả bằng ví GoDrive. Idempotent theo
+// tripID như SettleTrip.
+func (s *Service) SettleWalletTrip(ctx context.Context, tripID, riderID, driverID string, fare, fee money.VND) error {
+	txID := "tx_trip_" + tripID
+	if ok, err := s.ledger.Exists(ctx, txID); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
+	now := s.clk.Now()
+	if err := s.ledger.Post(ctx, SettleWalletTrip(txID, riderID, driverID, tripID, fare, fee, now)); err != nil {
+		return err
+	}
+	if tax := s.taxPermille(ctx); tax > 0 {
+		if err := s.ledger.Post(ctx, WithholdTax("tx_tax_"+tripID, driverID, tripID, fare-fee, tax, now)); err != nil {
+			return err
+		}
+	}
+	s.announceBalance(ctx, driverID)
+	_ = s.bus.Publish(ctx, eventbus.TopicPaymentSettled, map[string]any{
+		"trip_id": tripID, "driver_id": driverID, "cash": false, "wallet": true,
+	})
+	return nil
+}
+
+// PostRefund ghi bút toán hoàn tiền. TxID suy từ refundID nên gọi lại sau một
+// lần lỗi giữa chừng là an toàn — không bao giờ hoàn hai lần.
+func (s *Service) PostRefund(ctx context.Context, refundID, riderID, driverID, tripID string,
+	amount money.VND, by ChargeTo) error {
+	if amount <= 0 {
+		return errs.Invalid("amount_invalid", "Số tiền hoàn phải lớn hơn 0.")
+	}
+	if !by.Valid() {
+		return errs.Invalid("charge_to_invalid", "Bên chịu khoản hoàn phải là PLATFORM hoặc DRIVER.")
+	}
+	if by == ChargeDriver && driverID == "" {
+		return errs.Invalid("refund_no_driver", "Chuyến không có tài xế để trừ lại.")
+	}
+	txID := "tx_refund_" + refundID
+	if ok, err := s.ledger.Exists(ctx, txID); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
+	if err := s.ledger.Post(ctx, Refund(txID, refundID, riderID, driverID, tripID, amount, by, s.clk.Now())); err != nil {
+		return err
+	}
+	if by == ChargeDriver {
+		s.announceBalance(ctx, driverID)
+	}
+	return nil
+}
+
+// RefundPosted cho biết bút toán của một lần hoàn đã nằm trong sổ chưa.
+func (s *Service) RefundPosted(ctx context.Context, refundID string) (bool, error) {
+	return s.ledger.Exists(ctx, "tx_refund_"+refundID)
+}
+
+// RiderBalance là số dư ví GoDrive của khách. Có thể âm: phí huỷ trễ trừ vào
+// ví kể cả khi ví chưa có tiền.
+func (s *Service) RiderBalance(ctx context.Context, riderID string) (money.VND, error) {
+	return s.ledger.Balance(ctx, riderID, AccRiderWallet)
+}
+
 // PostCancelFee ghi có phí huỷ chuyến cho tài xế, ghi nợ khách.
 //
 // Trước đây phí huỷ được TÍNH ở trip.Service và đưa vào nhật ký, nhưng không ai

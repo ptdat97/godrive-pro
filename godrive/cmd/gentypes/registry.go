@@ -9,8 +9,10 @@ import (
 	"github.com/example/godrive/internal/location"
 	"github.com/example/godrive/internal/platform/authn"
 	"github.com/example/godrive/internal/platform/httpx"
+	"github.com/example/godrive/internal/refund"
 	"github.com/example/godrive/internal/settings"
 	"github.com/example/godrive/internal/trip"
+	"github.com/example/godrive/internal/wallet"
 	"github.com/example/godrive/pkg/geo"
 )
 
@@ -39,6 +41,8 @@ var enums = []named{
 	{"Role", tOf[authn.Role]()},
 	{"SettingKind", tOf[settings.Kind]()},
 	{"SettingKey", tOf[settings.Key]()},
+	{"RefundStatus", tOf[refund.Status]()},
+	{"ChargeTo", tOf[wallet.ChargeTo]()},
 }
 
 // roots: những kiểu giao diện dùng, theo thứ tự xuất hiện trong tệp sinh ra.
@@ -64,4 +68,5 @@ var roots = []named{
 	{"SettingSection", tOf[settings.Section]()},
 	{"SettingGroup", tOf[settings.GroupView]()},
 	{"SettingHistoryEntry", tOf[settings.HistoryEntry]()},
+	{"Refund", tOf[refund.Refund]()},
 }

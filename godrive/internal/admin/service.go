@@ -243,13 +243,22 @@ func (s *Service) RecordSettingChange(ctx context.Context, actorID, key string,
 		}, s.clk.Now()))
 }
 
+// RecordRefund ghi một thao tác hoàn tiền vào nhật ký chung. Module refund sở
+// hữu nghiệp vụ; ở đây chỉ để mọi thao tác quản trị nằm chung một dòng thời gian.
+func (s *Service) RecordRefund(ctx context.Context, actorID, action, refundID string, meta map[string]any) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.Record(ctx, NewAuditEntry(actorID, "", action, TargetRefund, refundID, meta, s.clk.Now()))
+}
+
 // Audit trả nhật ký thao tác quản trị. Chỉ đọc — không có đường nào sửa hay xoá.
 func (s *Service) Audit(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
 	if s.audit == nil {
 		return []AuditEntry{}, nil
 	}
 	if f.TargetType != "" && f.TargetType != TargetDriver &&
-		f.TargetType != TargetTrip && f.TargetType != TargetSettings {
+		f.TargetType != TargetTrip && f.TargetType != TargetSettings && f.TargetType != TargetRefund {
 		return nil, errs.Invalid("target_type_invalid", "Loại đối tượng không hợp lệ.")
 	}
 	return s.audit.List(ctx, f)

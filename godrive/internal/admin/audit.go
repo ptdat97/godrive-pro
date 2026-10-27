@@ -21,6 +21,7 @@ const (
 	TargetDriver   = "driver"
 	TargetTrip     = "trip"
 	TargetSettings = "settings"
+	TargetRefund   = "refund"
 )
 
 // AuditEntry là một dòng nhật ký thao tác quản trị. Bất biến: chỉ thêm mới.

@@ -10,6 +10,7 @@ import (
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/id"
 	"github.com/example/godrive/pkg/idem"
+	"github.com/example/godrive/pkg/money"
 	"github.com/example/godrive/pkg/page"
 )
 
@@ -40,7 +41,17 @@ type Service struct {
 	idem    idem.Store
 	clk     clock.Clock
 	policy  CancelPolicyProvider
+	wallet  RiderWalletPort
 }
+
+// RiderWalletPort đọc số dư ví GoDrive của khách.
+type RiderWalletPort interface {
+	RiderBalance(ctx context.Context, riderID string) (money.VND, error)
+}
+
+// UseRiderWallet bật kiểm tra số dư khi khách chọn trả bằng ví. Không nối thì
+// mọi chuyến trả bằng ví bị từ chối — mặc định đóng.
+func (s *Service) UseRiderWallet(w RiderWalletPort) { s.wallet = w }
 
 // UseCancelPolicy nối nguồn chính sách huỷ động.
 func (s *Service) UseCancelPolicy(p CancelPolicyProvider) { s.policy = p }
@@ -97,6 +108,25 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (t *Trip, retErr e
 	q, err := s.pricing.GetQuote(ctx, in.QuoteID)
 	if err != nil {
 		return nil, err
+	}
+	// Ví phải đủ trả cước ngay lúc đặt. Kiểm lúc hoàn tất là quá muộn: chuyến
+	// đã chạy xong, tài xế đã chở, và ví khách thành nợ.
+	//
+	// Vẫn có thể âm trong trường hợp hiếm — hai chuyến đặt gần như cùng lúc
+	// cùng thấy đủ tiền. Chấp nhận được: số dư ví chỉ đến từ tiền hoàn, và nợ
+	// đó hiện ra trên chính ví của khách.
+	if in.PaymentMethod == PayWallet {
+		if s.wallet == nil {
+			return nil, errs.Invalid("payment_method_unavailable", "Chưa hỗ trợ trả bằng ví GoDrive.")
+		}
+		bal, err := s.wallet.RiderBalance(ctx, in.RiderID)
+		if err != nil {
+			return nil, err
+		}
+		if bal < q.Total {
+			return nil, errs.E(errs.KindConflict, "wallet_insufficient",
+				"Số dư ví GoDrive không đủ cho chuyến này. Vui lòng chọn cách trả khác.")
+		}
 	}
 
 	now := s.clk.Now()

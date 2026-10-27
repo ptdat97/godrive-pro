@@ -109,6 +109,17 @@ export const BLOCKED_REASON_LABEL: Record<string, string> = {
   wallet_debt_exceeded: "Nợ vượt hạn mức",
 };
 
+export const REFUND_STATUS_LABEL: Record<string, string> = {
+  PENDING: "Chờ duyệt",
+  APPROVED: "Đã hoàn",
+  REJECTED: "Từ chối",
+};
+
+export const CHARGE_TO_LABEL: Record<string, string> = {
+  PLATFORM: "Nền tảng chịu",
+  DRIVER: "Trừ tài xế",
+};
+
 /** Tên giấy tờ có thời hạn. */
 export const DOCUMENT_LABEL: Record<string, string> = {
   insurance: "Bảo hiểm TNDS",

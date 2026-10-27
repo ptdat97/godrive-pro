@@ -133,6 +133,7 @@ func (a *App) onTripCompleted(ctx context.Context, e eventbus.Event) error {
 	var p struct {
 		TripID        string `json:"trip_id"`
 		DriverID      string `json:"driver_id"`
+		RiderID       string `json:"rider_id"`
 		Fare          int64  `json:"fare"`
 		PlatformFee   int64  `json:"platform_fee"`
 		PaymentMethod string `json:"payment_method"`
@@ -140,9 +141,16 @@ func (a *App) onTripCompleted(ctx context.Context, e eventbus.Event) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return err
 	}
-	cash := trip.PaymentMethod(p.PaymentMethod) == trip.PayCash
-	if err := a.Wallet.SettleTrip(ctx, p.TripID, p.DriverID,
-		money.VND(p.Fare), money.VND(p.PlatformFee), cash); err != nil {
+	method := trip.PaymentMethod(p.PaymentMethod)
+	var err error
+	if method == trip.PayWallet {
+		err = a.Wallet.SettleWalletTrip(ctx, p.TripID, p.RiderID, p.DriverID,
+			money.VND(p.Fare), money.VND(p.PlatformFee))
+	} else {
+		err = a.Wallet.SettleTrip(ctx, p.TripID, p.DriverID,
+			money.VND(p.Fare), money.VND(p.PlatformFee), method == trip.PayCash)
+	}
+	if err != nil {
 		return err
 	}
 	if _, err := a.Trips.MarkPaid(ctx, p.TripID); err != nil {

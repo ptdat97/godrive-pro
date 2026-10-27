@@ -53,6 +53,12 @@ export type SettingKind =
 /** Key là tên một nhóm cấu hình. */
 export type SettingKey = "pricing" | "surge" | "matching" | "wallet" | "location";
 
+/** Status là trạng thái của một yêu cầu hoàn tiền. */
+export type RefundStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+/** ChargeTo là bên chịu khoản hoàn tiền. */
+export type ChargeTo = "PLATFORM" | "DRIVER";
+
 export interface Point {
   lat: number;
   lng: number;
@@ -308,4 +314,28 @@ export interface SettingHistoryEntry {
   changed_by: string;
   reason?: string;
   at: string;
+}
+
+/** Refund là một yêu cầu hoàn tiền. */
+export interface Refund {
+  id: string;
+  trip_id: string;
+  rider_id: string;
+  driver_id?: string;
+  amount: number;
+  reason: string;
+  charge_to: ChargeTo;
+  status: RefundStatus;
+  requested_by: string;
+  /** SelfApproved: khoản dưới ngưỡng, người xin tự duyệt. */
+  self_approved: boolean;
+  decided_by?: string;
+  decision_note?: string;
+  created_at: string;
+  decided_at?: string;
+  /**
+   * Posted: bút toán đã nằm trong sổ cái. APPROVED mà chưa Posted là lần ghi
+   * sổ trước bị lỗi giữa chừng — duyệt lại sẽ ghi bù, không ghi hai lần.
+   */
+  posted: boolean;
 }

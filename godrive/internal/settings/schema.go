@@ -175,6 +175,9 @@ func SchemaFor(k Key) []Section {
 				f("cancel_fee_vnd", "Phí huỷ chuyến", KindVND, 0, 500000, ""),
 				f("free_cancel_window_seconds", "Cửa sổ huỷ miễn phí", KindSeconds, 0, 1800,
 					"Huỷ trong khoảng này kể từ lúc ghép thì không mất phí."),
+				f("refund_self_approve_max_vnd", "Ngưỡng tự duyệt hoàn tiền", KindVND, 0, 1000000,
+					"Khoản hoàn đến mức này thì người tạo tự duyệt; cao hơn thì cần người thứ hai. "+
+						"Đặt 0 để mọi khoản đều cần hai người."),
 			},
 		}}
 

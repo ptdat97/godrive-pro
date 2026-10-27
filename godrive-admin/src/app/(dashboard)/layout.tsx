@@ -7,6 +7,7 @@ const NAV = [
   { href: "/", label: "Tổng quan" },
   { href: "/drivers", label: "Tài xế" },
   { href: "/trips", label: "Chuyến đi" },
+  { href: "/refunds", label: "Hoàn tiền" },
   { href: "/live", label: "Bản đồ" },
   { href: "/settings", label: "Cấu hình" },
 ];

@@ -46,7 +46,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 
 ---
 
-## 4.2 Bảng endpoint đầy đủ (48 route)
+## 4.2 Bảng endpoint đầy đủ (54 route)
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
@@ -70,6 +70,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `POST` | `/v1/payments/webhook/{provider}` | **công khai** | xác thực bằng **chữ ký HMAC**, không phải bằng token |
 | **Ví tài xế** ||||
 | `GET` | `/v1/drivers/me/wallet` | `driver` | `wallet.wallet` |
+| `GET` | `/v1/riders/me/wallet` | `rider` | `wallet.riderWallet` — số dư ví GoDrive (từ tiền hoàn) + bút toán 90 ngày |
 | `GET` | `/v1/drivers/me/statement` | `driver` | `wallet.statement` |
 | `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ khi `DEV_AUTH=true` VÀ chưa có cổng thanh toán nào** |
 | **Báo giá** ||||
@@ -111,6 +112,11 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `GET` | `/v1/admin/trips/{id}/events` | `admin` | `admin.tripEvents` |
 | `GET` | `/v1/admin/live-map` | `admin` | `admin.liveMap` |
 | `GET` | `/v1/admin/audit` | `admin` | `admin.audit` |
+| `POST` | `/v1/admin/refunds` | `admin` | `refund.request` — `{trip_id, amount, reason, charge_to?: "PLATFORM"\|"DRIVER"}`. Đến ngưỡng `wallet.refund_self_approve_max_vnd` thì tự duyệt và ghi sổ ngay; cao hơn thì `PENDING` |
+| `GET` | `/v1/admin/refunds` | `admin` | `refund.list` — `status`, `trip_id`, `limit` |
+| `GET` | `/v1/admin/refunds/{id}` | `admin` | `refund.get` |
+| `POST` | `/v1/admin/refunds/{id}/approve` | `admin` | `refund.approve` — người duyệt **phải khác** người xin (`403 second_approver_required`); gọi lại trên khoản đã duyệt mà chưa ghi sổ thì ghi bù, không ghi hai lần |
+| `POST` | `/v1/admin/refunds/{id}/reject` | `admin` | `refund.reject` — `{note}` bắt buộc ≥ 5 ký tự |
 | `GET` | `/v1/admin/settings` | `admin` | `settings.list` |
 | `GET` | `/v1/admin/settings/{key}` | `admin` | `settings.get` |
 | `PUT` | `/v1/admin/settings/{key}` | `admin` | `settings.put` |
@@ -410,6 +416,8 @@ Mã lỗi riêng của nhóm này: `setting_version_conflict` · `setting_reason
 | `not_admin` | forbidden | `admin.Auth` — **thông báo giống hệt mọi trường hợp** |
 | `full_name_required` / `vehicle_type_invalid` / `plate_invalid` / `documents_required` / `insurance_until_invalid` | invalid | `driver.Onboard` |
 | `driver_not_found` / `driver_create_failed` | not_found/conflict | `driver` repo |
+| `wallet_insufficient` | conflict | `POST /v1/trips` với `payment_method: "WALLET"` khi số dư ví không đủ cước |
+| `refund_exceeds_paid` · `trip_not_refundable` · `second_approver_required` · `refund_already_decided` | conflict/forbidden | hoàn tiền (T-36) |
 | `kyc_not_approved` / `driver_suspended` / `documents_expired` / `driver_offline` / `driver_busy` / `wallet_debt_exceeded` | forbidden/conflict | **`Driver.CanAcceptTrip`** |
 | `driver_on_trip` / `driver_state_changed` | conflict | `driver.GoOffline` / CAS |
 | `point_out_of_range` / `mock_location` / `low_accuracy` / `implausible_jump` | invalid/forbidden | `location.Ingest` |

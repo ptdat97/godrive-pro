@@ -27,6 +27,7 @@ import (
 	"github.com/example/godrive/internal/platform/httpx"
 	"github.com/example/godrive/internal/platform/redisx"
 	"github.com/example/godrive/internal/pricing"
+	"github.com/example/godrive/internal/refund"
 	"github.com/example/godrive/internal/settings"
 	"github.com/example/godrive/internal/trip"
 	"github.com/example/godrive/internal/wallet"
@@ -55,6 +56,8 @@ type App struct {
 	// Settings là cấu hình nghiệp vụ chỉnh được từ bảng điều khiển.
 	Settings *settings.Service
 	Payments *payment.Service
+	// Refunds là quy trình hoàn tiền về ví khách, hai cấp duyệt (T-36).
+	Refunds *refund.Service
 	// Settlement khác nil ở chế độ Postgres. Đối soát và chi trả cần bảng
 	// settlement_batches để chống trả tiền hai lần.
 	Settlement *wallet.Settlement
@@ -244,6 +247,7 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	driverSvc.UseBalanceReader(walletSvc)
 	// Cho phép tài xế tự thoát khỏi trạng thái kẹt khi không còn chuyến nào chạy.
 	driverSvc.UseTripPort(tripSvc)
+	tripSvc.UseRiderWallet(walletSvc)
 
 	// Redis được ưu tiên cho lời mời và khoá chuyến (dữ liệu nóng, sống ngắn).
 	// Không có Redis thì dùng Postgres — ở đó `offers_one_accepted_per_trip`
@@ -300,6 +304,12 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	if revoker != nil {
 		adminSvc.UseRevoker(revoker)
 	}
+	var refundStore refund.Store = refund.NewMemoryStore()
+	if db != nil {
+		refundStore = refund.NewPostgresStore(db)
+	}
+	refundSvc := refund.NewService(refundStore, tripSvc, walletSvc, adminSvc, clk, id.New)
+
 	adminAuth := admin.NewAuth(identitySvc, cfg.AdminPhones)
 	if !adminAuth.Enabled() {
 		log.Warn("chưa cấu hình ADMIN_PHONES: bảng điều khiển vận hành sẽ từ chối mọi đăng nhập")
@@ -309,7 +319,7 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		Cfg: cfg, Log: log, Clock: clk, Bus: bus, Issuer: issuer,
 		Identity: identitySvc, Drivers: driverSvc, Location: locSvc,
 		Pricing: pricingSvc, Trips: tripSvc, Wallet: walletSvc, Matcher: matcher,
-		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Settlement: settlement,
+		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Refunds: refundSvc, Settlement: settlement,
 		Surge: surge, Outbox: obx, adminAuth: adminAuth,
 		Redis: rdb, Revoker: revoker, Metrics: newAppMetrics(),
 		db: db,
@@ -407,6 +417,7 @@ func (a *App) Router() http.Handler {
 	matching.NewHandler(a.Matcher, a.Issuer, a.driverIDFromRequest).Register(mux)
 	admin.NewHandler(a.Admin, a.Issuer, a.adminAuth).Register(mux)
 	settings.NewHandler(a.Settings, a.Issuer, a.Admin).Register(mux)
+	refund.NewHandler(a.Refunds, a.Issuer).Register(mux)
 
 	// Mặc định 30 request/giây, burst 60 cho mỗi IP (RATE_LIMIT_RPS/BURST).
 	// Rate limit toàn cụm khi có Redis: bản in-process cho mỗi pod một hạn mức
