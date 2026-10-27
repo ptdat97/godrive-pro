@@ -46,7 +46,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 
 ---
 
-## 4.2 Bảng endpoint đầy đủ (54 route)
+## 4.2 Bảng endpoint đầy đủ (57 route)
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
@@ -70,6 +70,9 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `POST` | `/v1/payments/webhook/{provider}` | **công khai** | xác thực bằng **chữ ký HMAC**, không phải bằng token |
 | **Ví tài xế** ||||
 | `GET` | `/v1/drivers/me/wallet` | `driver` | `wallet.wallet` |
+| `GET` | `/v1/places/autocomplete` | `rider`+`driver` | `places.autocomplete` — `q` (≥ 2 ký tự, ngắn hơn trả rỗng mà không gọi Goong), `lat`/`lng` tuỳ chọn để ưu tiên gần → `{suggestions:[{place_id,title,address}]}` |
+| `GET` | `/v1/places/{id}` | `rider`+`driver` | `places.detail` — toạ độ của một gợi ý → `{place_id,name,address,point}` |
+| `GET` | `/v1/places/reverse` | `rider`+`driver` | `places.reverse` — `lat`,`lng` → địa chỉ để hiện tên điểm đón |
 | `GET` | `/v1/riders/me/wallet` | `rider` | `wallet.riderWallet` — số dư ví GoDrive (từ tiền hoàn) + bút toán 90 ngày |
 | `GET` | `/v1/drivers/me/statement` | `driver` | `wallet.statement` |
 | `POST` | `/v1/drivers/me/topup` | `driver` | `wallet.topUp` — **chỉ khi `DEV_AUTH=true` VÀ chưa có cổng thanh toán nào** |
@@ -416,6 +419,7 @@ Mã lỗi riêng của nhóm này: `setting_version_conflict` · `setting_reason
 | `not_admin` | forbidden | `admin.Auth` — **thông báo giống hệt mọi trường hợp** |
 | `full_name_required` / `vehicle_type_invalid` / `plate_invalid` / `documents_required` / `insurance_until_invalid` | invalid | `driver.Onboard` |
 | `driver_not_found` / `driver_create_failed` | not_found/conflict | `driver` repo |
+| `places_unavailable` | **503** | chưa cấu hình `GOONG_API_KEY` — app lùi về chọn điểm trên bản đồ |
 | `wallet_insufficient` | conflict | `POST /v1/trips` với `payment_method: "WALLET"` khi số dư ví không đủ cước |
 | `refund_exceeds_paid` · `trip_not_refundable` · `second_approver_required` · `refund_already_decided` | conflict/forbidden | hoàn tiền (T-36) |
 | `kyc_not_approved` / `driver_suspended` / `documents_expired` / `driver_offline` / `driver_busy` / `wallet_debt_exceeded` | forbidden/conflict | **`Driver.CanAcceptTrip`** |

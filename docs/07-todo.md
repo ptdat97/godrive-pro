@@ -780,7 +780,7 @@ tắt/bật app không lách được · thiếu lý do bị từ chối · gia 
 
 ---
 
-### <a id="t-38"></a>T-38 · Tìm kiếm địa điểm (geocoding) `P1` `theo Rider App`
+### <a id="t-38"></a>T-38 · 🟡 Tìm kiếm địa điểm (geocoding) `P1` `theo Rider App`
 
 Khách phải nhập được *"Chợ Bến Thành"* chứ không phải toạ độ. Hiện chưa có nhà cung cấp nào được
 nối — [pricing/domain.go](../godrive/internal/pricing/domain.go) mới chỉ ghi chú dự định dùng
@@ -788,10 +788,20 @@ Goong/VietMap.
 
 - [x] ~~Chọn nhà cung cấp~~ → **Goong** (chốt 2026-10-27): dữ liệu địa chỉ/hẻm Việt Nam tốt, có
       autocomplete + geocoding, rẻ hơn Google. *Còn cần API key* từ goong.io
-- [ ] Tìm địa điểm theo từ khoá, ưu tiên gần vị trí hiện tại
-- [ ] Toạ độ → địa chỉ, để hiện tên điểm đón
-- [ ] Cache kết quả, vì đây là API tính tiền theo lượt gọi
+- [x] Tìm địa điểm theo từ khoá, ưu tiên gần vị trí hiện tại — module [internal/places](../godrive/internal/places)
+- [x] Toạ độ → địa chỉ, để hiện tên điểm đón
+- [x] Cache kết quả, vì đây là API tính tiền theo lượt gọi: Redis khi có (các pod dùng chung một lần
+      trả tiền), gợi ý 6 giờ theo ô ~1 km, toạ độ của place 30 ngày, địa chỉ của toạ độ làm tròn ~11 m
+      24 giờ. Từ khoá < 2 ký tự không gọi. Lỗi không vào cache. Số liệu `godrive_places_lookups_total{kind,cache}`
+- [ ] **Chạy với key thật:** client viết theo tài liệu công khai của Goong, chưa gọi API thật lần nào.
+      Có key thì chạy `TEST_GOONG_API_KEY=... go test ./internal/places -run TestGoongLive -v`
 - [ ] Địa điểm gần đây, Nhà/Cơ quan/Yêu thích
+
+---
+
+**Verify** — 6 test với máy chủ Goong giả (ánh xạ phản hồi, cache, làm tròn toạ độ, lỗi không vào cache,
+cache hỏng vẫn phục vụ, chưa cấu hình trả 503) · `TestPlacesHTTP`. Kiểm ngược: bỏ làm tròn toạ độ → GPS
+nhảy vài mét thành lượt gọi tính tiền mới, test đỏ.
 
 ---
 

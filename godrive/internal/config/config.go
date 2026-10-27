@@ -78,6 +78,12 @@ type Config struct {
 	// Internet qua NAT của nhà mạng — một IP có thể là hàng trăm người dùng.
 	RateLimitRPS   int
 	RateLimitBurst int
+
+	// GoongAPIKey bật tìm địa điểm (T-38). Rỗng = /v1/places trả 503
+	// places_unavailable và app lùi về chọn điểm trên bản đồ.
+	GoongAPIKey string
+	// GoongURL đổi được để test trỏ vào máy chủ giả.
+	GoongURL string
 }
 
 func Load() (Config, error) {
@@ -104,6 +110,8 @@ func Load() (Config, error) {
 
 		RateLimitRPS:   getInt("RATE_LIMIT_RPS", 30),
 		RateLimitBurst: getInt("RATE_LIMIT_BURST", 60),
+		GoongAPIKey:    get("GOONG_API_KEY", ""),
+		GoongURL:       get("GOONG_URL", "https://rsapi.goong.io"),
 
 		MoMoPartnerCode: get("MOMO_PARTNER_CODE", ""),
 		MoMoAccessKey:   get("MOMO_ACCESS_KEY", ""),

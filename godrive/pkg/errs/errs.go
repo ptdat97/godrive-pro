@@ -16,7 +16,10 @@ const (
 	KindNotFound     Kind = "not_found"
 	KindConflict     Kind = "conflict"
 	KindRateLimited  Kind = "rate_limited"
-	KindInternal     Kind = "internal"
+	// KindUnavailable: tính năng phụ thuộc dịch vụ ngoài chưa cấu hình hoặc
+	// đang hỏng. 503 thay vì 500 để app biết đây là tạm thời và có đường lùi.
+	KindUnavailable Kind = "unavailable"
+	KindInternal    Kind = "internal"
 )
 
 type Error struct {
@@ -79,6 +82,8 @@ func HTTPStatus(err error) int {
 		return http.StatusConflict
 	case KindRateLimited:
 		return http.StatusTooManyRequests
+	case KindUnavailable:
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

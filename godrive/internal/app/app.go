@@ -22,9 +22,11 @@ import (
 	"github.com/example/godrive/internal/notification"
 	"github.com/example/godrive/internal/outbox"
 	"github.com/example/godrive/internal/payment"
+	"github.com/example/godrive/internal/places"
 	"github.com/example/godrive/internal/platform/authn"
 	"github.com/example/godrive/internal/platform/eventbus"
 	"github.com/example/godrive/internal/platform/httpx"
+	"github.com/example/godrive/internal/platform/metrics"
 	"github.com/example/godrive/internal/platform/redisx"
 	"github.com/example/godrive/internal/pricing"
 	"github.com/example/godrive/internal/refund"
@@ -58,6 +60,8 @@ type App struct {
 	Payments *payment.Service
 	// Refunds là quy trình hoàn tiền về ví khách, hai cấp duyệt (T-36).
 	Refunds *refund.Service
+	// Places là tìm địa điểm qua Goong, có cache phía trước (T-38).
+	Places *places.Service
 	// Settlement khác nil ở chế độ Postgres. Đối soát và chi trả cần bảng
 	// settlement_batches để chống trả tiền hai lần.
 	Settlement *wallet.Settlement
@@ -310,6 +314,21 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	}
 	refundSvc := refund.NewService(refundStore, tripSvc, walletSvc, adminSvc, clk, id.New)
 
+	// Tìm địa điểm: mỗi lượt gọi Goong tính tiền, nên cache dùng chung Redis
+	// khi có — nhiều pod mà mỗi pod một cache là trả tiền nhiều lần cho cùng
+	// một câu hỏi.
+	var placesCache places.Cache = places.NewMemoryCache(50_000)
+	if rdb != nil {
+		placesCache = places.NewRedisCache(rdb.Raw(), redisx.KeyPrefix)
+	}
+	var placesProvider places.Provider
+	if cfg.GoongAPIKey != "" {
+		placesProvider = places.NewGoong(cfg.GoongURL, cfg.GoongAPIKey)
+	} else if !cfg.InMemory() {
+		log.Warn("chưa cấu hình GOONG_API_KEY: tìm địa điểm trả 503, app phải chọn điểm trên bản đồ")
+	}
+	placesSvc := places.NewService(placesProvider, placesCache)
+
 	adminAuth := admin.NewAuth(identitySvc, cfg.AdminPhones)
 	if !adminAuth.Enabled() {
 		log.Warn("chưa cấu hình ADMIN_PHONES: bảng điều khiển vận hành sẽ từ chối mọi đăng nhập")
@@ -319,7 +338,7 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 		Cfg: cfg, Log: log, Clock: clk, Bus: bus, Issuer: issuer,
 		Identity: identitySvc, Drivers: driverSvc, Location: locSvc,
 		Pricing: pricingSvc, Trips: tripSvc, Wallet: walletSvc, Matcher: matcher,
-		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Refunds: refundSvc, Settlement: settlement,
+		Admin: adminSvc, Settings: settingsSvc, Payments: paySvc, Refunds: refundSvc, Places: placesSvc, Settlement: settlement,
 		Surge: surge, Outbox: obx, adminAuth: adminAuth,
 		Redis: rdb, Revoker: revoker, Metrics: newAppMetrics(),
 		db: db,
@@ -341,6 +360,14 @@ func NewWithClock(cfg config.Config, log *slog.Logger, clk clock.Clock) (*App, e
 	app.wireSettings()
 	if err := settingsSvc.Reload(context.Background()); err != nil {
 		log.Warn("chưa nạp được cấu hình, tạm dùng giá trị mặc định", "err", err)
+	}
+
+	app.Places.OnLookup = func(kind string, hit bool) {
+		c := "miss"
+		if hit {
+			c = "hit"
+		}
+		app.Metrics.places.Inc(metrics.Labels{"kind": kind, "cache": c})
 	}
 
 	app.registerGauges()
@@ -418,6 +445,7 @@ func (a *App) Router() http.Handler {
 	admin.NewHandler(a.Admin, a.Issuer, a.adminAuth).Register(mux)
 	settings.NewHandler(a.Settings, a.Issuer, a.Admin).Register(mux)
 	refund.NewHandler(a.Refunds, a.Issuer).Register(mux)
+	places.NewHandler(a.Places, a.Issuer).Register(mux)
 
 	// Mặc định 30 request/giây, burst 60 cho mỗi IP (RATE_LIMIT_RPS/BURST).
 	// Rate limit toàn cụm khi có Redis: bản in-process cho mỗi pod một hạn mức

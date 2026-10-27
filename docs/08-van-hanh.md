@@ -54,6 +54,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `SHUTDOWN_WAIT` | `15s` | thời gian tắt êm |
 | `DATA_RESIDENCY` | `VN` | ghi chú tuân thủ NĐ 13/2023 |
 | **`ADMIN_PHONES`** | *(rỗng)* | danh sách SĐT được vào bảng điều khiển, ngăn cách bằng dấu phẩy. **Rỗng = không ai vào được** |
+| `GOONG_API_KEY` | *(rỗng)* | bật tìm địa điểm (T-38). Rỗng ⇒ `/v1/places/*` trả 503, app chọn điểm trên bản đồ. **Bí mật.** Lần đầu bật: chạy `TestGoongLive` ([§8.15](#815-tìm-địa-điểm-goong)) |
 | `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `30` / `60` | hạn mức request mỗi IP. Nhiều thuê bao di động VN ra Internet qua NAT nhà mạng — một IP có thể là hàng trăm người; theo dõi tỉ lệ `429` sau khi ra mắt. Bộ sinh tải cần đặt rất lớn |
 | **`DOCUMENTS_KEY`** | *(rỗng)* | Khoá AES-256 (32 byte hex hoặc base64) mã hoá CCCD/GPLX. Rỗng ⇒ lưu **thô**. Sinh: `openssl rand -hex 32` |
 | `MOMO_PARTNER_CODE` / `MOMO_ACCESS_KEY` / `MOMO_SECRET_KEY` | *(rỗng)* | Bật cổng MoMo. Thiếu `SECRET_KEY` ⇒ cổng **không** được bật |
@@ -744,4 +745,25 @@ Hai sửa đổi được áp **cùng lúc** nên số đo không tách được
 - **Mạng di động thật** — mọi thứ chạy qua localhost; độ trễ 4G cộng thêm vào `offer_delivery`
 - `POST /v1/quotes` là API chậm nhất (p95 71 ms ở 5.000 tài xế): hệ số tăng giá đếm tài xế rảnh bằng
   cách nạp mọi vị trí trong bán kính. Ổn ở mật độ thực tế, nhưng là chỗ đầu tiên chạm trần
+
+---
+
+## 8.15 Tìm địa điểm (Goong)
+
+Mỗi lượt gọi Goong tính tiền. Backend đặt cache phía trước — xem tỉ lệ trúng cache ở
+`godrive_places_lookups_total{cache="hit"|"miss"}`: **mỗi `miss` là một lượt bị tính tiền**.
+
+**Lần đầu bật key**, trước khi mở cho người dùng:
+
+```bash
+TEST_GOONG_API_KEY=<key> go test ./internal/places -run TestGoongLive -v
+```
+
+Client được viết theo tài liệu công khai của Goong và mới chỉ thử với máy chủ giả. Test này gọi Goong
+thật (tìm "Chợ Bến Thành", lấy toạ độ, đổi toạ độ ra địa chỉ) và đỏ nếu định dạng phản hồi khác dự tính.
+
+| Cảnh báo khi | Ý nghĩa |
+|---|---|
+| tỉ lệ `miss` tăng đột biến | cache Redis mất dữ liệu, hoặc có ai đó gọi API với từ khoá ngẫu nhiên — xem log theo IP/tài khoản |
+| `places_bad_status` trong log | sai key hoặc hết hạn mức của Goong |
 
