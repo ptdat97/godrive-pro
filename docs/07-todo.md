@@ -6,7 +6,7 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ:** **26 / 28** — GĐ 0, 1, 2 xong · GĐ 3 xong phần hạ tầng · GĐ 4 xong đường tiền và hai chốt bảo mật
+**Tiến độ:** **27 / 28** — GĐ 0, 1, 2 xong · GĐ 3 xong phần hạ tầng · GĐ 4 xong đường tiền và hai chốt bảo mật
 
 | GĐ | Xong | Còn |
 |---|---|---|
@@ -15,7 +15,7 @@
 | GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
 | GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
 | GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC, hạn giấy tờ chưa) | T-23, T-26 |
-| Chưa xếp | ✅ T-27 (quyền CSDL + trigger + tự kiểm lúc khởi động) | T-28 |
+| Chưa xếp | ✅ T-27 (quyền CSDL + trigger + tự kiểm lúc khởi động) · ✅ T-28 | — |
 | Trước app | ✅ T-32 · 🟡 T-31 (chiều xuống xong; còn đo tải p95) | T-33 (cần credential FCM/APNs) |
 
 **Ngoài kế hoạch:** **7 lỗi** phát hiện khi kiểm thử
@@ -484,12 +484,13 @@ dữ liệu lịch sử khi có quyết định bằng văn bản.
 
 ---
 
-### <a id="t-28"></a>T-28 · Tách mã lỗi cho tài xế OFFLINE `[G-27]` `P2`
+### <a id="t-28"></a>T-28 · ✅ Tách mã lỗi cho tài xế OFFLINE `[G-27]` `P2`
 
-- [ ] `CanAcceptTrip` trả mã riêng (ví dụ `driver_offline`) khi `Status == OFFLINE`, giữ `driver_busy` cho `ASSIGNED`/`ON_TRIP`
-- [ ] Bảng điều khiển hiện đang hiển thị *"Bạn đang trong một chuyến khác"* cho tài xế chỉ đơn giản là chưa bật app
+- [x] `CanAcceptTrip` trả `driver_offline` khi `Status == OFFLINE`, giữ `driver_busy` cho `ASSIGNED`/`ON_TRIP`
+- [x] Bảng điều khiển hiện *"Đang tắt nhận chuyến"* thay vì *"Đang có chuyến"* cho tài xế chỉ đơn giản là chưa bật app
 
-**Verify** — `GET /v1/admin/drivers/{id}` của tài xế `OFFLINE` đã duyệt KYC trả `blocked_reason=driver_offline`
+**Verify** — `TestAdminReviewKYCChangesState`: tài xế `OFFLINE` vừa duyệt KYC có `blocked_reason=driver_offline` ·
+`TestOfflineDriverCannotAcceptPendingOffer` kiểm đúng mã lỗi chứ không chỉ "có lỗi"
 
 ---
 
@@ -812,7 +813,7 @@ Cần dữ liệu chuyến thật mới có ý nghĩa — xếp sau pilot.
 | [G-24](05-doi-chieu-spec-code.md#g-24) ActiveByDriver chết | [T-12](#t-12) | P2 | 1 |
 | [G-25](05-doi-chieu-spec-code.md#g-25) không quan sát được | [T-25](#t-25) | P1 | 3 | ✅ xong (trừ tracing) |
 | [G-26](05-doi-chieu-spec-code.md#g-26) CCCD plaintext | [T-24](#t-24) | P2 | 4 | ✅ xong |
-| [G-27](05-doi-chieu-spec-code.md#g-27) `driver_busy` cho tài xế OFFLINE | [T-28](#t-28) | P2 | — |
+| [G-27](05-doi-chieu-spec-code.md#g-27) `driver_busy` cho tài xế OFFLINE | [T-28](#t-28) | ✅ xong | — |
 | ✅ [G-28](05-doi-chieu-spec-code.md#g-28) khoá idempotency kẹt 24h | [T-05](#t-05) *(sửa khi kiểm thử)* | P0 | 1 |
 | ✅ [G-29](05-doi-chieu-spec-code.md#g-29) data race ở `pkg/idem` | *(sửa khi kiểm thử)* | P0 | 1 |
 | ✅ [G-30](05-doi-chieu-spec-code.md#g-30) `matching.MemoryStore` lệch đồng hồ | *(sửa khi kiểm thử)* | P1 | 1 |

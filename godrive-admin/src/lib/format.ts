@@ -103,6 +103,7 @@ export const PAYMENT_LABEL: Record<string, string> = {
 export const BLOCKED_REASON_LABEL: Record<string, string> = {
   kyc_not_approved: "Chưa duyệt hồ sơ",
   driver_suspended: "Đang bị khoá",
+  driver_offline: "Đang tắt nhận chuyến",
   driver_busy: "Đang có chuyến",
   wallet_debt_exceeded: "Nợ vượt hạn mức",
 };

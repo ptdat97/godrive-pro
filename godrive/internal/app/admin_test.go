@@ -180,6 +180,10 @@ func TestAdminReviewKYCChangesState(t *testing.T) {
 	if after.BlockedReason == "kyc_not_approved" {
 		t.Fatal("duyệt xong thì lý do chặn phải đổi, BlockedReason là một nguồn sự thật duy nhất")
 	}
+	// T-28: đã duyệt nhưng chưa bật app là OFFLINE — không phải "đang có chuyến".
+	if after.BlockedReason != "driver_offline" {
+		t.Fatalf("tài xế đã duyệt nhưng chưa online phải bị chặn với driver_offline, được %q", after.BlockedReason)
+	}
 
 	// T-13: mọi thao tác quản trị phải để lại dấu vết truy được.
 	entries, err := a.Admin.Audit(ctx, admin.AuditFilter{TargetID: d.ID})

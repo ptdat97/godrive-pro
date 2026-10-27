@@ -247,8 +247,8 @@ func TestOfflineDriverCannotAcceptPendingOffer(t *testing.T) {
 	if err := a.Drivers.GoOffline(ctx, d.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Matcher.Accept(ctx, offers[0].ID, d.ID); err == nil {
-		t.Fatal("tài xế đã tắt nhận chuyến không được nhận lời mời")
+	if _, err := a.Matcher.Accept(ctx, offers[0].ID, d.ID); errs.CodeOf(err) != "driver_offline" {
+		t.Fatalf("tài xế đã tắt nhận chuyến phải bị từ chối với driver_offline, được %v", err)
 	}
 	// Và chuyến phải vẫn đang chờ ghép, không bị treo ở ASSIGNED.
 	cur, err := a.Trips.Get(ctx, tr.ID)

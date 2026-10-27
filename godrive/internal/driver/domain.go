@@ -180,6 +180,12 @@ func (d *Driver) CanAcceptTrip(debtLimit money.VND) error {
 	if d.Status == StatusSuspended {
 		return errs.E(errs.KindForbidden, "driver_suspended", "Tài khoản đang bị tạm khoá.")
 	}
+	// OFFLINE tách khỏi driver_busy: gộp chung thì tài xế chỉ đơn giản là chưa
+	// bật app lại hiện trên bảng điều khiển là "đang có chuyến", và vận hành đi
+	// tìm một chuyến không tồn tại.
+	if d.Status == StatusOffline {
+		return errs.Conflict("driver_offline", "Bạn đang tắt nhận chuyến.")
+	}
 	if d.Status != StatusIdle {
 		return errs.Conflict("driver_busy", "Bạn đang trong một chuyến khác.")
 	}

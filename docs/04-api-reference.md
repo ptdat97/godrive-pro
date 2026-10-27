@@ -398,7 +398,7 @@ Mã lỗi riêng của nhóm này: `setting_version_conflict` · `setting_reason
 | `not_admin` | forbidden | `admin.Auth` — **thông báo giống hệt mọi trường hợp** |
 | `full_name_required` / `vehicle_type_invalid` / `plate_invalid` / `documents_required` / `insurance_until_invalid` | invalid | `driver.Onboard` |
 | `driver_not_found` / `driver_create_failed` | not_found/conflict | `driver` repo |
-| `kyc_not_approved` / `driver_suspended` / `driver_busy` / `wallet_debt_exceeded` | forbidden/conflict | **`Driver.CanAcceptTrip`** |
+| `kyc_not_approved` / `driver_suspended` / `driver_offline` / `driver_busy` / `wallet_debt_exceeded` | forbidden/conflict | **`Driver.CanAcceptTrip`** |
 | `driver_on_trip` / `driver_state_changed` | conflict | `driver.GoOffline` / CAS |
 | `point_out_of_range` / `mock_location` / `low_accuracy` / `implausible_jump` | invalid/forbidden | `location.Ingest` |
 | `point_invalid` / `vehicle_type_invalid` / `quote_expired` | invalid | `pricing` |
