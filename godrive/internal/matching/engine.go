@@ -328,7 +328,7 @@ func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64, c
 			}
 			d.WalletBalance = bal
 		}
-		if err := d.CanAcceptTrip(cfg.DebtLimit); err != nil {
+		if err := d.CanAcceptTrip(cfg.DebtLimit, e.clk.Now()); err != nil {
 			continue
 		}
 		eligible = append(eligible, cand{snap: s, drv: d})

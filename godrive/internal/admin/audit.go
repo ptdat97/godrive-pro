@@ -13,6 +13,8 @@ import (
 const (
 	ActionReviewKYC      = "review_kyc"
 	ActionUpdateSettings = "update_settings"
+	// ActionUpdateDocuments: vận hành ghi hạn giấy tờ mới sau khi xem giấy thật.
+	ActionUpdateDocuments = "update_documents"
 )
 
 const (

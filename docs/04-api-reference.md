@@ -46,7 +46,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 
 ---
 
-## 4.2 Bảng endpoint đầy đủ (47 route)
+## 4.2 Bảng endpoint đầy đủ (48 route)
 
 | Method | Path | Vai trò | Handler |
 |---|---|---|---|
@@ -59,7 +59,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `POST` | `/v1/auth/logout` | mọi vai trò | `identity.logout` — thu hồi token hiện tại, hoặc `all_devices` |
 | **Tài xế** ||||
 | `POST` | `/v1/drivers/register` | `driver` | `driver.register` |
-| `GET` | `/v1/drivers/me` | `driver` | `driver.me` |
+| `GET` | `/v1/drivers/me` | `driver` | `driver.me` — kèm `document_alerts`: giấy tờ đã/sắp hết hạn trong 30 ngày, gấp nhất trước |
 | `POST` | `/v1/drivers/me/online` | `driver` | `driver.online` |
 | `POST` | `/v1/drivers/me/offline` | `driver` | `driver.offline` |
 | **Vị trí** ||||
@@ -105,6 +105,7 @@ chuyền: pod tải cao → health check bị chặn → orchestrator giết pod
 | `GET` | `/v1/admin/drivers` | `admin` | `admin.listDrivers` |
 | `GET` | `/v1/admin/drivers/{id}` | `admin` | `admin.getDriver` |
 | `POST` | `/v1/admin/drivers/{id}/kyc` | `admin` | `admin.reviewKYC` |
+| `PUT` | `/v1/admin/drivers/{id}/documents` | `admin` | `admin.updateDocuments` — ghi hạn giấy tờ mới sau khi xem giấy thật. Body: `insurance_no?`, `insurance_until?`, `license_until?`, `inspection_until?` (YYYY-MM-DD; `""` = không thời hạn; vắng = giữ nguyên) + **`reason` bắt buộc ≥ 5 ký tự**. Vào nhật ký với ngày trước/sau |
 | `GET` | `/v1/admin/trips` | `admin` | `admin.listTrips` |
 | `GET` | `/v1/admin/trips/{id}` | `admin` | `admin.getTrip` |
 | `GET` | `/v1/admin/trips/{id}/events` | `admin` | `admin.tripEvents` |
@@ -398,7 +399,7 @@ Mã lỗi riêng của nhóm này: `setting_version_conflict` · `setting_reason
 | `not_admin` | forbidden | `admin.Auth` — **thông báo giống hệt mọi trường hợp** |
 | `full_name_required` / `vehicle_type_invalid` / `plate_invalid` / `documents_required` / `insurance_until_invalid` | invalid | `driver.Onboard` |
 | `driver_not_found` / `driver_create_failed` | not_found/conflict | `driver` repo |
-| `kyc_not_approved` / `driver_suspended` / `driver_offline` / `driver_busy` / `wallet_debt_exceeded` | forbidden/conflict | **`Driver.CanAcceptTrip`** |
+| `kyc_not_approved` / `driver_suspended` / `documents_expired` / `driver_offline` / `driver_busy` / `wallet_debt_exceeded` | forbidden/conflict | **`Driver.CanAcceptTrip`** |
 | `driver_on_trip` / `driver_state_changed` | conflict | `driver.GoOffline` / CAS |
 | `point_out_of_range` / `mock_location` / `low_accuracy` / `implausible_jump` | invalid/forbidden | `location.Ingest` |
 | `point_invalid` / `vehicle_type_invalid` / `quote_expired` | invalid | `pricing` |

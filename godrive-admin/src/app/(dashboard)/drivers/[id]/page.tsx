@@ -20,6 +20,7 @@ import {
   kycTone,
 } from "@/components/ui";
 import KycActions from "./kyc-actions";
+import DocumentsForm from "./documents-form";
 import type { DriverRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -133,6 +134,14 @@ export default async function DriverDetailPage({ params }: Props) {
           </dl>
         </Card>
       </div>
+
+      <Card title="Hạn giấy tờ">
+        <DocumentsForm
+          driverId={d.id}
+          expiry={d.document_expiry}
+          alerts={d.document_alerts ?? []}
+        />
+      </Card>
 
       <p className="text-xs text-zinc-400">
         Giấy tờ định danh (CCCD, GPLX) không hiển thị ở đây — dữ liệu nhạy cảm

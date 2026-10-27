@@ -27,6 +27,7 @@ type DriverPort interface {
 	Get(ctx context.Context, id string) (*driver.Driver, error)
 	ListByStatus(ctx context.Context, s driver.Status, limit int) ([]*driver.Driver, error)
 	ReviewKYC(ctx context.Context, driverID string, approved bool) error
+	UpdateDocumentDates(ctx context.Context, driverID string, in driver.DocumentDates) (*driver.Driver, error)
 }
 
 type TripPort interface {
@@ -83,6 +84,12 @@ type DriverRow struct {
 	InDebt bool `json:"in_debt"`
 	// CanAcceptTrip nêu lý do tài xế không nhận được chuyến (rỗng = nhận được).
 	BlockedReason string `json:"blocked_reason,omitempty"`
+	// DocumentExpiry là ba hạn giấy tờ hiện lưu — để form gia hạn hiện giá trị
+	// đang có. Chỉ ngày tháng, không phải số giấy tờ: số CCCD/GPLX vẫn không
+	// bao giờ ra khỏi API.
+	DocumentExpiry DocumentExpiry `json:"document_expiry"`
+	// DocumentAlerts là giấy tờ đã hoặc sắp hết hạn (trong 30 ngày).
+	DocumentAlerts []driver.DocumentAlert `json:"document_alerts,omitempty"`
 
 	LastSeen  *time.Time `json:"last_seen,omitempty"`
 	Position  *geo.Point `json:"position,omitempty"`
@@ -91,6 +98,13 @@ type DriverRow struct {
 	FraudFlags24h int `json:"fraud_flags_24h"`
 
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// DocumentExpiry là các hạn giấy tờ, YYYY-MM-DD; rỗng = không có hạn / chưa khai.
+type DocumentExpiry struct {
+	InsuranceUntil  string `json:"insurance_until"`
+	LicenseUntil    string `json:"license_until"`
+	InspectionUntil string `json:"inspection_until"`
 }
 
 // TripRow là một dòng trong bảng chuyến đi.

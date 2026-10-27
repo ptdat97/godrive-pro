@@ -60,6 +60,10 @@ type Documents struct {
 	VehicleRegNo   string `json:"vehicle_reg_no"`  // số đăng ký xe (cà vẹt)
 	InsuranceNo    string `json:"insurance_no"`    // bảo hiểm TNDS bắt buộc
 	InsuranceUntil string `json:"insurance_until"` // YYYY-MM-DD
+	// LicenseUntil là hạn GPLX. Rỗng với hạng A1 — không có thời hạn.
+	LicenseUntil string `json:"license_until"`
+	// InspectionUntil là hạn đăng kiểm. Rỗng với xe máy.
+	InspectionUntil string `json:"inspection_until"`
 }
 
 // Ngưỡng làm mượt Bayes cho thống kê tài xế.
@@ -173,12 +177,17 @@ func (d *Driver) IdleSeconds(now time.Time) float64 {
 
 // CanAcceptTrip quyết định tài xế có đủ điều kiện nhận chuyến hay không.
 // Ngưỡng nợ ví là điểm mấu chốt của mô hình tiền mặt tại VN.
-func (d *Driver) CanAcceptTrip(debtLimit money.VND) error {
+func (d *Driver) CanAcceptTrip(debtLimit money.VND, now time.Time) error {
 	if d.KYC != KYCApproved {
 		return errs.E(errs.KindForbidden, "kyc_not_approved", "Hồ sơ của bạn chưa được duyệt.")
 	}
 	if d.Status == StatusSuspended {
 		return errs.E(errs.KindForbidden, "driver_suspended", "Tài khoản đang bị tạm khoá.")
+	}
+	// Đứng trước OFFLINE: tài xế cần biết lý do THẬT khiến họ không chạy được,
+	// không phải "bạn đang tắt nhận chuyến" rồi bật lên vẫn bị từ chối.
+	if d.Documents.Expired(now) {
+		return errDocumentsExpired()
 	}
 	// OFFLINE tách khỏi driver_busy: gộp chung thì tài xế chỉ đơn giản là chưa
 	// bật app lại hiện trên bảng điều khiển là "đang có chuyến", và vận hành đi

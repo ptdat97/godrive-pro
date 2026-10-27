@@ -189,6 +189,43 @@ func (s *Service) ReviewKYC(ctx context.Context, actor Actor, driverID string, a
 	return s.GetDriver(ctx, driverID)
 }
 
+// UpdateDocuments ghi hạn giấy tờ mới — đường gia hạn duy nhất. Bắt buộc có lý
+// do, và hạn cũ/mới vào nhật ký: hạn bảo hiểm là thứ cơ quan chức năng hỏi tới
+// khi có tai nạn, nên phải trả lời được ai đã sửa nó, lúc nào, từ ngày nào.
+func (s *Service) UpdateDocuments(ctx context.Context, actor Actor, driverID string,
+	in driver.DocumentDates, reason string) (*DriverRow, error) {
+	if len([]rune(strings.TrimSpace(reason))) < 5 {
+		return nil, errs.Invalid("reason_required", "Vui lòng ghi lý do (ít nhất 5 ký tự).")
+	}
+	before, err := s.drivers.Get(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	after, err := s.drivers.UpdateDocumentDates(ctx, driverID, in)
+	if err != nil {
+		return nil, err
+	}
+	if s.audit != nil {
+		dates := func(d driver.Documents) map[string]string {
+			return map[string]string{
+				"insurance_until": d.InsuranceUntil, "license_until": d.LicenseUntil,
+				"inspection_until": d.InspectionUntil,
+			}
+		}
+		// Số hợp đồng bảo hiểm là dữ liệu đã mã hoá ở CSDL: chỉ ghi là CÓ đổi,
+		// không chép bản rõ vào nhật ký.
+		meta := map[string]any{
+			"reason": reason, "before": dates(before.Documents), "after": dates(after.Documents),
+			"insurance_no_changed": before.Documents.InsuranceNo != after.Documents.InsuranceNo,
+		}
+		if err := s.audit.Record(ctx, NewAuditEntry(actor.AccountID, actor.Phone,
+			ActionUpdateDocuments, TargetDriver, driverID, meta, s.clk.Now())); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetDriver(ctx, driverID)
+}
+
 func kycStateFor(approved bool) driver.KYCState {
 	if approved {
 		return driver.KYCApproved
@@ -244,16 +281,21 @@ func (s *Service) driverRow(ctx context.Context, d *driver.Driver) (DriverRow, e
 		CompletedTrips: d.Stats.TripsCompleted, RatingCount: d.Stats.RatingCount,
 		IdleSince:     d.IdleSince,
 		WalletBalance: bal, CashOnHand: cash,
-		InDebt:        bal < s.debtLimit.Neg(),
-		FraudFlags24h: s.loc.FraudCount(d.ID, FraudWindow),
-		CreatedAt:     d.CreatedAt,
+		InDebt:         bal < s.debtLimit.Neg(),
+		FraudFlags24h:  s.loc.FraudCount(d.ID, FraudWindow),
+		CreatedAt:      d.CreatedAt,
+		DocumentAlerts: d.Documents.Alerts(s.clk.Now()),
+		DocumentExpiry: DocumentExpiry{
+			InsuranceUntil: d.Documents.InsuranceUntil, LicenseUntil: d.Documents.LicenseUntil,
+			InspectionUntil: d.Documents.InspectionUntil,
+		},
 	}
 
 	// Lý do bị chặn nhận chuyến lấy thẳng từ domain để giao diện không phải
 	// tự suy luận lại điều kiện — một nguồn sự thật duy nhất.
 	probe := *d
 	probe.WalletBalance = bal
-	if err := probe.CanAcceptTrip(s.debtLimit); err != nil {
+	if err := probe.CanAcceptTrip(s.debtLimit, s.clk.Now()); err != nil {
 		row.BlockedReason = errs.CodeOf(err)
 	}
 
@@ -524,6 +566,43 @@ func (s *Service) alerts(ctx context.Context, ov *Overview) []Alert {
 			}
 		}
 	}
+	// Giấy tờ: đã hết hạn thì tài xế đang bị chặn; sắp hết hạn (≤ 7 ngày) thì
+	// vận hành còn kịp nhắc. Không gồm SUSPENDED — đã bị khoá vì lý do khác.
+	expired, urgent := 0, 0
+	now := s.clk.Now()
+	for _, st := range []driver.Status{driver.StatusIdle, driver.StatusOffline,
+		driver.StatusAssigned, driver.StatusOnTrip} {
+		ds, err := s.drivers.ListByStatus(ctx, st, MaxPageSize)
+		if err != nil {
+			continue
+		}
+		for _, d := range ds {
+			if d.KYC != driver.KYCApproved {
+				continue
+			}
+			if as := d.Documents.Alerts(now); len(as) > 0 {
+				switch as[0].Level {
+				case driver.AlertExpired:
+					expired++
+				case driver.AlertUrgent:
+					urgent++
+				}
+			}
+		}
+	}
+	if expired > 0 {
+		out = append(out, Alert{
+			Level: AlertWarn, Code: "documents_expired", Count: expired,
+			Message: "tài xế bị chặn nhận chuyến do giấy tờ hết hạn",
+		})
+	}
+	if urgent > 0 {
+		out = append(out, Alert{
+			Level: AlertInfo, Code: "documents_expiring", Count: urgent,
+			Message: "tài xế có giấy tờ hết hạn trong 7 ngày tới",
+		})
+	}
+
 	if indebt > 0 {
 		out = append(out, Alert{
 			Level: AlertWarn, Code: "drivers_in_debt", Count: indebt,

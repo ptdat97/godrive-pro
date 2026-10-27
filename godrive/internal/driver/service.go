@@ -4,7 +4,6 @@ import (
 	"context"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/example/godrive/internal/platform/eventbus"
 	"github.com/example/godrive/pkg/clock"
@@ -70,10 +69,12 @@ func (s *Service) Onboard(ctx context.Context, in OnboardInput) (*Driver, error)
 	}
 	// Hạn bảo hiểm giờ được lưu thành DATE để job cảnh báo sắp hết hạn truy vấn
 	// được. Chặn định dạng sai ngay tại cửa, đừng để dữ liệu rác xuống đĩa.
-	if in.Documents.InsuranceUntil != "" {
-		if _, err := time.Parse(DateLayout, in.Documents.InsuranceUntil); err != nil {
-			return nil, errs.Invalid("insurance_until_invalid",
-				"Ngày hết hạn bảo hiểm phải theo dạng YYYY-MM-DD.")
+	for field, v := range map[string]string{
+		"insurance_until": in.Documents.InsuranceUntil, "license_until": in.Documents.LicenseUntil,
+		"inspection_until": in.Documents.InspectionUntil,
+	} {
+		if err := validDate(field, v); err != nil {
+			return nil, err
 		}
 	}
 	now := s.clk.Now()
@@ -99,6 +100,53 @@ func (s *Service) Onboard(ctx context.Context, in OnboardInput) (*Driver, error)
 	return d, nil
 }
 
+// UpdateDocumentDates ghi hạn giấy tờ mới sau khi vận hành đã xem giấy thật.
+//
+// Đây là đường DUY NHẤT để gia hạn: trước đây giấy tờ chỉ ghi được một lần lúc
+// đăng ký, nên tài xế gia hạn bảo hiểm xong cũng không có cách nào báo cho hệ
+// thống biết. Không mở cho tài xế tự khai: một ngày tự khai không có giấy thật
+// đi kèm thì không có giá trị pháp lý.
+func (s *Service) UpdateDocumentDates(ctx context.Context, driverID string, in DocumentDates) (*Driver, error) {
+	d, err := s.repo.Get(ctx, driverID)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range []struct {
+		name string
+		in   *string
+		dst  *string
+	}{
+		{"insurance_no", in.InsuranceNo, &d.Documents.InsuranceNo},
+		{"insurance_until", in.InsuranceUntil, &d.Documents.InsuranceUntil},
+		{"license_until", in.LicenseUntil, &d.Documents.LicenseUntil},
+		{"inspection_until", in.InspectionUntil, &d.Documents.InspectionUntil},
+	} {
+		if f.in == nil {
+			continue
+		}
+		v := strings.TrimSpace(*f.in)
+		if f.name != "insurance_no" {
+			if err := validDate(f.name, v); err != nil {
+				return nil, err
+			}
+		}
+		*f.dst = v
+	}
+	d.UpdatedAt = s.clk.Now()
+	if err := s.repo.Update(ctx, d); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// DocumentAlerts trả giấy tờ đã hoặc sắp hết hạn của tài xế, tính tới hôm nay.
+func (s *Service) DocumentAlerts(d *Driver) []DocumentAlert {
+	if out := d.Documents.Alerts(s.clk.Now()); out != nil {
+		return out
+	}
+	return []DocumentAlert{}
+}
+
 // ReviewKYC dùng cho admin sau khi đối chiếu kết quả eKYC (FPT.AI / VNPT eKYC).
 func (s *Service) ReviewKYC(ctx context.Context, driverID string, approved bool) error {
 	d, err := s.repo.Get(ctx, driverID)
@@ -121,6 +169,11 @@ func (s *Service) GoOnline(ctx context.Context, driverID string) error {
 	}
 	if d.KYC != KYCApproved {
 		return errs.E(errs.KindForbidden, "kyc_not_approved", "Hồ sơ của bạn chưa được duyệt.")
+	}
+	// Chặn ngay ở cửa bật app: để tài xế online rồi không bao giờ nhận được
+	// lời mời nào là bắt họ ngồi chờ mà không biết vì sao.
+	if d.Documents.Expired(s.clk.Now()) {
+		return errDocumentsExpired()
 	}
 	if d.Status == StatusSuspended {
 		return errs.E(errs.KindForbidden, "driver_suspended", "Tài khoản đang bị tạm khoá.")
@@ -207,7 +260,7 @@ func (s *Service) Reserve(ctx context.Context, driverID string) error {
 		}
 		d.WalletBalance = bal
 	}
-	if err := d.CanAcceptTrip(s.limit(ctx)); err != nil {
+	if err := d.CanAcceptTrip(s.limit(ctx), s.clk.Now()); err != nil {
 		return err
 	}
 	return s.repo.UpdateStatus(ctx, driverID, StatusIdle, StatusAssigned, d.Version)

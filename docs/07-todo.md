@@ -688,15 +688,32 @@ Không biết hệ thống chịu được bao nhiêu tài xế online thì khô
 
 ---
 
-### <a id="t-37"></a>T-37 · Cảnh báo hạn giấy tờ tài xế `P1` `tuân thủ`
+### <a id="t-37"></a>T-37 · 🟡 Cảnh báo hạn giấy tờ tài xế `P1` `tuân thủ`
 
-`InsuranceUntil` được lưu nhưng **không có gì đọc nó**. Tài xế chạy với bảo hiểm hết hạn là rủi ro
-pháp lý thuộc về nền tảng.
+`InsuranceUntil` được lưu nhưng **không có gì đọc nó**, và **không có đường nào cập nhật giấy tờ sau
+khi đăng ký** — tài xế gia hạn bảo hiểm xong cũng không báo được cho hệ thống. Tài xế chạy với bảo
+hiểm hết hạn là rủi ro pháp lý thuộc về nền tảng.
 
-- [ ] Job quét hạn bảo hiểm, GPLX, đăng ký xe
-- [ ] Cảnh báo trước 30/15/7 ngày qua push và trên app
-- [ ] Hết hạn thì tự chuyển `SUSPENDED`, không chờ người xử lý tay
-- [ ] Hiện trên bảng điều khiển vận hành
+- [x] Migration `0011`: thêm hạn **GPLX** và hạn **đăng kiểm** cạnh hạn bảo hiểm. Trống = không có hạn
+      (GPLX A1, xe máy không đăng kiểm) và **không** chặn
+- [x] Hết hạn thì **chặn nhận chuyến ngay** — `documents_expired` ở `CanAcceptTrip` và ở cửa `GoOnline`.
+      **Lệch so với mô tả gốc ("tự chuyển SUSPENDED") có chủ đích:** tính theo ngày lúc kiểm tra nên
+      đúng nửa đêm là chặn, không chờ job; gia hạn xong tự mở; và không lẫn với tài xế bị khoá vì
+      gian lận — tự mở SUSPENDED là lỡ tay mở cho cả người bị khoá vì lý do khác
+- [x] Ngày tính theo **giờ Việt Nam** (UTC+7): tính theo UTC thì từ 0 tới 7 giờ sáng, giấy hết hạn hôm
+      qua vẫn được coi là còn hạn
+- [x] Gia hạn: `PUT /v1/admin/drivers/{id}/documents`, bắt buộc lý do, vào nhật ký với ngày trước/sau.
+      Không cho tài xế tự khai — một ngày tự khai không kèm giấy thật thì vô giá trị
+- [x] Cảnh báo 30/15/7 ngày **trên app** (`GET /v1/drivers/me` → `document_alerts`) và trên **bảng
+      điều khiển** (huy hiệu lý do chặn, form gia hạn ở trang tài xế, hai cảnh báo ở trang tổng quan)
+- [ ] Cảnh báo qua **thông báo đẩy** — cần [T-33](#t-33). Khi làm: phải nhớ đã gửi mức nào rồi, nếu
+      không job chạy hai lần một ngày là gửi trùng, lỡ một ngày là mất mốc
+- [ ] Chưa xem trên trình duyệt: form gia hạn mới qua `tsc` và `eslint`
+
+**Verify** — `TestExpiredDocumentsBlockUntilRenewed` (không được chào chuyến · admin thấy lý do ·
+tắt/bật app không lách được · thiếu lý do bị từ chối · gia hạn xong mở ngay · đúng 2 bản ghi nhật ký) ·
+`TestExpiringDocumentsWarnButDoNotBlock` · `TestPostgresDocumentDatesRoundTrip` · 4 test đơn vị ở
+`internal/driver` gồm `TestExpiryUsesVietnamDate`. Kiểm ngược: bỏ chốt ở `CanAcceptTrip` → đỏ.
 
 ---
 

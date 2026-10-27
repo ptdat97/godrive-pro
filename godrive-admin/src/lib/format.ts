@@ -104,9 +104,24 @@ export const BLOCKED_REASON_LABEL: Record<string, string> = {
   kyc_not_approved: "Chưa duyệt hồ sơ",
   driver_suspended: "Đang bị khoá",
   driver_offline: "Đang tắt nhận chuyến",
+  documents_expired: "Giấy tờ hết hạn",
   driver_busy: "Đang có chuyến",
   wallet_debt_exceeded: "Nợ vượt hạn mức",
 };
+
+/** Tên giấy tờ có thời hạn. */
+export const DOCUMENT_LABEL: Record<string, string> = {
+  insurance: "Bảo hiểm TNDS",
+  license: "Giấy phép lái xe",
+  inspection: "Đăng kiểm",
+};
+
+/** Mô tả số ngày còn lại của một giấy tờ. */
+export function daysLeft(n: number): string {
+  if (n < 0) return `đã hết hạn ${-n} ngày`;
+  if (n === 0) return "hết hạn hôm nay";
+  return `còn ${n} ngày`;
+}
 
 export function label(map: Record<string, string>, key: string): string {
   return map[key] ?? key;

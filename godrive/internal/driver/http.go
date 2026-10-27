@@ -44,7 +44,12 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, d)
+	// Cảnh báo giấy tờ trả kèm hồ sơ để app hiện ngay ở màn hình chính, khi
+	// chưa có thông báo đẩy (T-33). Bản thân giấy tờ vẫn không trả ra.
+	httpx.JSON(w, http.StatusOK, struct {
+		*Driver
+		DocumentAlerts []DocumentAlert `json:"document_alerts"`
+	}{d, h.svc.DocumentAlerts(d)})
 }
 
 func (h *Handler) online(w http.ResponseWriter, r *http.Request)  { h.toggle(w, r, true) }

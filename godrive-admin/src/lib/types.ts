@@ -43,6 +43,10 @@ export interface DriverRow {
   in_debt: boolean;
   /** Mã lý do tài xế không nhận được chuyến; rỗng nghĩa là nhận được. */
   blocked_reason?: string;
+  /** Hạn giấy tờ, YYYY-MM-DD; rỗng = không có hạn hoặc chưa khai. */
+  document_expiry: DocumentExpiry;
+  /** Giấy tờ đã hoặc sắp hết hạn (trong 30 ngày), gấp nhất trước. */
+  document_alerts?: DocumentAlert[];
   last_seen?: string;
   position?: Point;
   battery_pc?: number;
@@ -221,4 +225,20 @@ export interface SettingHistoryEntry {
   changed_by: string;
   reason?: string;
   at: string;
+}
+
+export interface DocumentExpiry {
+  insurance_until: string;
+  license_until: string;
+  inspection_until: string;
+}
+
+export type DocumentKind = "insurance" | "license" | "inspection";
+export type DocumentAlertLevel = "expired" | "urgent" | "soon" | "notice";
+
+export interface DocumentAlert {
+  document: DocumentKind;
+  until: string;
+  days_left: number;
+  level: DocumentAlertLevel;
 }

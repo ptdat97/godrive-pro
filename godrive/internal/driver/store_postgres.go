@@ -71,7 +71,8 @@ const driverCols = `id, account_id, full_name, phone, city,
     kyc_state, status, wallet_balance, version, created_at, updated_at,
     offers_received, offers_accepted, completed_trips, trips_cancelled,
     rating_sum, rating_count, idle_since,
-    national_id, driver_license, vehicle_reg_no, insurance_no, insurance_until`
+    national_id, driver_license, vehicle_reg_no, insurance_no, insurance_until,
+    license_until, inspection_until`
 
 // nullDate đổi chuỗi YYYY-MM-DD sang giá trị DATE; chuỗi rỗng thành NULL.
 // Service đã validate trước khi tới đây; kiểm lại ở đây là lớp phòng thủ thứ hai
@@ -82,21 +83,34 @@ func nullDate(s string) (any, error) {
 	}
 	t, err := time.Parse(DateLayout, s)
 	if err != nil {
-		return nil, errs.Invalid("insurance_until_invalid", "Ngày hết hạn bảo hiểm phải theo dạng YYYY-MM-DD.")
+		return nil, errs.Invalid("document_date_invalid", "Ngày hết hạn giấy tờ phải theo dạng YYYY-MM-DD.")
 	}
 	return t, nil
 }
 
+// docDates đổi ba hạn giấy tờ sang tham số SQL, theo thứ tự cột.
+func docDates(d Documents) ([3]any, error) {
+	var out [3]any
+	for i, s := range []string{d.InsuranceUntil, d.LicenseUntil, d.InspectionUntil} {
+		v, err := nullDate(s)
+		if err != nil {
+			return out, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
 func (r *PostgresRepo) scan(row interface{ Scan(...any) error }) (*Driver, error) {
 	var d Driver
-	var insuranceUntil, idleSince sql.NullTime
+	var insuranceUntil, licenseUntil, inspectionUntil, idleSince sql.NullTime
 	err := row.Scan(&d.ID, &d.AccountID, &d.FullName, &d.Phone, &d.City,
 		&d.Vehicle.Type, &d.Vehicle.Plate, &d.Vehicle.Model, &d.Vehicle.Color,
 		&d.KYC, &d.Status, &d.WalletBalance, &d.Version, &d.CreatedAt, &d.UpdatedAt,
 		&d.Stats.OffersReceived, &d.Stats.OffersAccepted, &d.Stats.TripsCompleted,
 		&d.Stats.TripsCancelled, &d.Stats.RatingSum, &d.Stats.RatingCount, &idleSince,
 		&d.Documents.NationalID, &d.Documents.DriverLicense, &d.Documents.VehicleRegNo,
-		&d.Documents.InsuranceNo, &insuranceUntil)
+		&d.Documents.InsuranceNo, &insuranceUntil, &licenseUntil, &inspectionUntil)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errs.NotFound("driver_not_found", "Không tìm thấy tài xế.")
 	}
@@ -113,8 +127,17 @@ func (r *PostgresRepo) scan(row interface{ Scan(...any) error }) (*Driver, error
 		}
 		*f = plain
 	}
-	if insuranceUntil.Valid {
-		d.Documents.InsuranceUntil = insuranceUntil.Time.Format(DateLayout)
+	for _, f := range []struct {
+		src sql.NullTime
+		dst *string
+	}{
+		{insuranceUntil, &d.Documents.InsuranceUntil},
+		{licenseUntil, &d.Documents.LicenseUntil},
+		{inspectionUntil, &d.Documents.InspectionUntil},
+	} {
+		if f.src.Valid {
+			*f.dst = f.src.Time.Format(DateLayout)
+		}
 	}
 	if idleSince.Valid {
 		t := idleSince.Time
@@ -124,7 +147,7 @@ func (r *PostgresRepo) scan(row interface{ Scan(...any) error }) (*Driver, error
 }
 
 func (r *PostgresRepo) Create(ctx context.Context, d *Driver) error {
-	until, err := nullDate(d.Documents.InsuranceUntil)
+	dates, err := docDates(d.Documents)
 	if err != nil {
 		return err
 	}
@@ -135,14 +158,14 @@ func (r *PostgresRepo) Create(ctx context.Context, d *Driver) error {
 	_, err = r.db.ExecContext(ctx, `
         INSERT INTO drivers (`+driverCols+`, national_id_idx)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+                $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,
 		d.ID, d.AccountID, d.FullName, d.Phone, d.City,
 		d.Vehicle.Type, d.Vehicle.Plate, d.Vehicle.Model, d.Vehicle.Color,
 		d.KYC, d.Status, d.WalletBalance, d.Version, d.CreatedAt, d.UpdatedAt,
 		d.Stats.OffersReceived, d.Stats.OffersAccepted, d.Stats.TripsCompleted,
 		d.Stats.TripsCancelled, d.Stats.RatingSum, d.Stats.RatingCount, d.IdleSince,
 		enc.NationalID, enc.DriverLicense, enc.VehicleRegNo,
-		enc.InsuranceNo, until, r.blindIndex(d.Documents.NationalID))
+		enc.InsuranceNo, dates[0], dates[1], dates[2], r.blindIndex(d.Documents.NationalID))
 	if err != nil {
 		return errs.Wrap(errs.KindConflict, "driver_create_failed", "Không tạo được hồ sơ tài xế.", err)
 	}
@@ -191,7 +214,7 @@ func (r *PostgresRepo) UpdateStatus(ctx context.Context, id string, from, to Sta
 }
 
 func (r *PostgresRepo) Update(ctx context.Context, d *Driver) error {
-	until, err := nullDate(d.Documents.InsuranceUntil)
+	dates, err := docDates(d.Documents)
 	if err != nil {
 		return err
 	}
@@ -204,11 +227,12 @@ func (r *PostgresRepo) Update(ctx context.Context, d *Driver) error {
             wallet_balance=$6,
             national_id=$7, driver_license=$8, vehicle_reg_no=$9,
             insurance_no=$10, insurance_until=$11, national_id_idx=$12,
+            license_until=$13, inspection_until=$14,
             version=version+1, updated_at=now()
         WHERE id=$1`,
 		d.ID, d.FullName, d.Phone, d.City, d.KYC, d.WalletBalance,
 		enc.NationalID, enc.DriverLicense, enc.VehicleRegNo,
-		enc.InsuranceNo, until, r.blindIndex(d.Documents.NationalID))
+		enc.InsuranceNo, dates[0], r.blindIndex(d.Documents.NationalID), dates[1], dates[2])
 	if err != nil {
 		return errs.Wrap(errs.KindInternal, "db_error", "db", err)
 	}

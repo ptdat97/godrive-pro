@@ -313,11 +313,11 @@ func TestCashSettlementBlocksIndebtedDriver(t *testing.T) {
 		KYC: driver.KYCApproved, Status: driver.StatusIdle,
 		WalletBalance: -250000, // nợ 250k, vượt hạn mức 200k
 	}
-	if err := d.CanAcceptTrip(driver.DefaultDebtLimit); err == nil {
+	if err := d.CanAcceptTrip(driver.DefaultDebtLimit, time.Now()); err == nil {
 		t.Fatal("tài xế nợ quá hạn mức phải bị chặn nhận chuyến")
 	}
 	d.WalletBalance = -150000
-	if err := d.CanAcceptTrip(driver.DefaultDebtLimit); err != nil {
+	if err := d.CanAcceptTrip(driver.DefaultDebtLimit, time.Now()); err != nil {
 		t.Fatalf("nợ trong hạn mức vẫn phải nhận được chuyến: %v", err)
 	}
 }

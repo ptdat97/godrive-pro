@@ -34,3 +34,47 @@ export async function reviewKyc(
   revalidatePath("/");
   return { done: approved ? "approved" : "rejected" };
 }
+
+export interface DocumentsState {
+  error?: string;
+  code?: string;
+  done?: boolean;
+}
+
+/**
+ * Ghi hạn giấy tờ mới sau khi đã xem giấy thật. Chỉ gửi những ô có giá trị
+ * khác giá trị cũ, để nhật ký ghi đúng thứ đã đổi. Lý do bắt buộc — backend
+ * từ chối nếu thiếu.
+ */
+export async function updateDocuments(
+  _prev: DocumentsState,
+  formData: FormData,
+): Promise<DocumentsState> {
+  const driverId = String(formData.get("driver_id") ?? "");
+  if (!driverId) return { error: "Thiếu mã tài xế." };
+
+  const body: Record<string, string> = {
+    reason: String(formData.get("reason") ?? "").trim(),
+  };
+  for (const field of ["insurance_until", "license_until", "inspection_until"]) {
+    const next = String(formData.get(field) ?? "");
+    const prev = String(formData.get(`${field}__prev`) ?? "");
+    // Ô ngày rỗng nghĩa là "không có hạn" — gửi chuỗi rỗng để xoá hạn cũ.
+    if (next !== prev) body[field] = next;
+  }
+  if (Object.keys(body).length === 1) {
+    return { error: "Chưa đổi hạn nào." };
+  }
+
+  try {
+    await api.put(`/v1/admin/drivers/${driverId}/documents`, body);
+  } catch (err) {
+    const e = err as GoDriveError;
+    return { error: e.message, code: e.code };
+  }
+
+  revalidatePath(`/drivers/${driverId}`);
+  revalidatePath("/drivers");
+  revalidatePath("/");
+  return { done: true };
+}

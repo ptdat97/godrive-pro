@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/example/godrive/internal/driver"
 	"github.com/example/godrive/internal/platform/authn"
 	"github.com/example/godrive/internal/platform/httpx"
 	"github.com/example/godrive/pkg/geo"
@@ -32,6 +33,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/drivers", adm(http.HandlerFunc(h.listDrivers)))
 	mux.Handle("GET /v1/admin/drivers/{id}", adm(http.HandlerFunc(h.getDriver)))
 	mux.Handle("POST /v1/admin/drivers/{id}/kyc", adm(http.HandlerFunc(h.reviewKYC)))
+	mux.Handle("PUT /v1/admin/drivers/{id}/documents", adm(http.HandlerFunc(h.updateDocuments)))
 	mux.Handle("GET /v1/admin/trips", adm(http.HandlerFunc(h.listTrips)))
 	mux.Handle("GET /v1/admin/trips/{id}", adm(http.HandlerFunc(h.getTrip)))
 	mux.Handle("GET /v1/admin/trips/{id}/events", adm(http.HandlerFunc(h.tripEvents)))
@@ -139,6 +141,27 @@ func (h *Handler) reviewKYC(w http.ResponseWriter, r *http.Request) {
 	}
 	c := authn.MustClaims(r.Context())
 	row, err := h.svc.ReviewKYC(r.Context(), Actor{AccountID: c.Sub}, r.PathValue("id"), req.Approved)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, row)
+}
+
+type updateDocumentsReq struct {
+	driver.DocumentDates
+	Reason string `json:"reason"`
+}
+
+func (h *Handler) updateDocuments(w http.ResponseWriter, r *http.Request) {
+	var req updateDocumentsReq
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	c := authn.MustClaims(r.Context())
+	row, err := h.svc.UpdateDocuments(r.Context(), Actor{AccountID: c.Sub}, r.PathValue("id"),
+		req.DocumentDates, req.Reason)
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
