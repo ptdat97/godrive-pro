@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/example/godrive/internal/platform/httpx"
+	"github.com/example/godrive/internal/platform/logger"
 	"github.com/example/godrive/pkg/errs"
 )
 
@@ -65,6 +66,12 @@ func (i *Issuer) Require(roles ...Role) httpx.Middleware {
 					// Đây là chỗ hiếm hoi chọn fail-closed: cho qua khi Redis
 					// chết nghĩa là mọi token đã thu hồi lại có hiệu lực trở
 					// lại, đúng vào lúc hệ thống đang có sự cố.
+					//
+					// Ghi lại nguyên nhân: lỗi 401 không trả 5xx nên httpx.Fail
+					// không log, và test tải T-35 từng thấy 48 lần từ chối loại
+					// này mà không có dòng log nào nói vì sao.
+					logger.From(r.Context()).Warn("không kiểm được thu hồi phiên — từ chối request",
+						"err", err.Error(), "path", r.URL.Path)
 					httpx.Fail(w, r, errs.E(errs.KindUnauthorized, "revocation_check_failed",
 						"Không xác minh được phiên đăng nhập, vui lòng thử lại."))
 					return

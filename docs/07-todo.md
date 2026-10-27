@@ -16,14 +16,14 @@
 | GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
 | GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC, hạn giấy tờ chưa) | T-23, T-26 |
 | Chưa xếp | ✅ T-27 (quyền CSDL + trigger + tự kiểm lúc khởi động) · ✅ T-28 | — |
-| Trước app | ✅ T-32 · 🟡 T-31 (chiều xuống xong; còn đo tải p95) | T-33 (cần credential FCM/APNs) |
+| Trước app | ✅ T-32 · ✅ T-31 (lời mời p95 5–16 ms, đo ở T-35) | T-33 (cần credential FCM/APNs) |
 
 **Ngoài kế hoạch:** **7 lỗi** phát hiện khi kiểm thử
 ([§5.4](05-doi-chieu-spec-code.md#loi-moi)) — đều đã sửa và có test hồi quy đã được kiểm ngược
 (khôi phục lỗi → xác nhận test đỏ → sửa lại).
 
-**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **166 test in-memory, 212 test với
-đủ hạ tầng** (Postgres, Redis, NATS, MQTT — đếm lại 2026-10-27, sau T-27; app trong test tích hợp
+**Trạng thái kiểm chứng:** `go build` / `go vet` / `gofmt` sạch · **223 test với đủ hạ tầng** (Postgres,
+Redis, NATS, MQTT — đếm lại 2026-10-27, sau T-35; app trong test tích hợp
 nối CSDL bằng role bị cắt quyền `godrive_app`) · `-race` sạch, không flake · luồng đầu-cuối qua HTTP
 thật · **2 tiến trình API thật**, `SIGKILL` một pod giữa chừng không mất việc · **9 bất biến kiểm
 trực tiếp trên CSDL** sau khi chạy.
@@ -543,7 +543,7 @@ liệu dev là thứ vứt đi, nhưng **không còn chấp nhận được** t�
 
 ---
 
-### <a id="t-31"></a>T-31 · 🟡 Chiều xuống realtime — máy chủ đẩy được tin tới thiết bị `P0`
+### <a id="t-31"></a>T-31 · ✅ Chiều xuống realtime — máy chủ đẩy được tin tới thiết bị `P0`
 
 **Lỗ hổng lớn nhất về kỹ thuật.** MQTT hiện chỉ có chiều lên: máy chủ `Subscribe` vào `drv/+/loc`
 và `drv/+/status`, không có một lệnh `Publish` nào đi ngược lại. Hệ quả:
@@ -576,8 +576,8 @@ Việc này phải xong **trước khi viết app**, vì nó quyết định ki�
 - [x] Khách chỉ nối được MQTT khi **đang có chuyến** — chặn ở `mqttauth` chứ không chỉ trông vào app.
       clientId `rdr_{account_id}`, chỉ được NGHE topic của mình, không publish vào đâu
 - [x] Số liệu `godrive_offer_push_delay_seconds`, `godrive_push_total{kind,result}`
-- [ ] **Verify chưa chạy:** p95 < 1s với 1.000 tài xế online mô phỏng — cần bộ test tải của [T-35](#t-35).
-      Số liệu đo đã có sẵn để T-35 đọc
+- [x] **Verify:** lời mời tới thiết bị p95 **5 ms** với 1.000 tài xế ở 100.000 bản tin vị trí/phút,
+      **16 ms** với 5.000 tài xế — mục tiêu < 1 s ([T-35](#t-35), [08 §8.14](08-van-hanh.md#814-test-tải-cmdloadgen))
 - [x] Tin `offer_withdrawn` cho các tài xế khác khi một người đã nhận (`taken`), và khi khách huỷ lúc
       đang tìm tài xế (`trip_cancelled`). Trường hợp sau trước đây còn tệ hơn: lời mời **vẫn nằm ở
       trạng thái chờ** trong kho tới hết 15 giây. `ExpireOffers` giờ trả về đúng những lời mời vừa bị
@@ -662,17 +662,29 @@ bỏ dòng chấm điểm → test đỏ.
 
 ---
 
-### <a id="t-35"></a>T-35 · Test tải — đo thay vì đoán `P1`
+### <a id="t-35"></a>T-35 · 🟡 Test tải — đo thay vì đoán `P1`
 
-Mọi ngưỡng hiệu năng trong tài liệu (`API p95 < 100ms`, `matching p95 < 300ms`,
-`offer delivery p95 < 1s`, `location freshness < 3s`) hiện là **mục tiêu chưa có số đo nào**.
-Không biết hệ thống chịu được bao nhiêu tài xế online thì không thể chốt quy mô pilot.
+Mọi ngưỡng hiệu năng trong tài liệu (`API p95 < 100ms`, `offer delivery p95 < 1s`,
+`location freshness < 3s`) trước đây là **mục tiêu chưa có số đo nào**.
 
-- [ ] Bộ sinh tải: N tài xế ảo publish vị trí + M khách đặt xe
-- [ ] Đo ở 1.000 tài xế online, 100.000 bản tin vị trí/phút
-- [ ] Đo độ trễ dispatch và độ trễ giao lời mời
-- [ ] Chạy ngâm 24 giờ tìm rò rỉ bộ nhớ và kết nối
-- [ ] Ghi số đo thật vào [08 §8.9](08-van-hanh.md) thay cho ngưỡng phỏng đoán
+- [x] Bộ sinh tải [cmd/loadgen](../godrive/cmd/loadgen): N tài xế ảo nối MQTT thật, gửi vị trí, nhận lời
+      mời qua tin đẩy và chạy trọn chuyến; khách ảo đặt xe qua HTTP, nghe trạng thái qua MQTT. Đo **từ
+      phía thiết bị**
+- [x] Đo ở 1.000 tài xế, **100.000 bản tin vị trí/phút**: lời mời p95 5 ms, vị trí → khách p95 3 ms,
+      API p95 ≤ 13 ms, 0 lỗi, backend ≤ 0,6 lõi
+- [x] Đo độ trễ dispatch và độ trễ giao lời mời — cả phía thiết bị lẫn phía máy chủ
+- [x] **Tìm điểm gãy** ở 5.000 tài xế / 20 chuyến mỗi giây và **sửa**: dispatcher tra CSDL cho mọi
+      tài xế trong bán kính (G-20) + EMQX chỉ có 8 kết nối gọi xác thực → vòng xoáy ngắt kết nối hàng
+      loạt. Sau khi sửa: 0 lỗi, mọi p95 đạt mục tiêu
+- [x] Ghi số đo thật vào [08 §8.14](08-van-hanh.md#814-test-tải-cmdloadgen)
+- [x] `RATE_LIMIT_RPS`/`RATE_LIMIT_BURST` chỉnh được — trước là hằng số 30/60
+- [ ] Ngâm **24 giờ** — mới chạy 10 phút (2.000 tài xế: RSS backend đứng yên ~38 MB)
+- [x] Lỗi `revocation_check_failed` (fail-closed khi Redis lỗi) giờ được ghi log kèm nguyên nhân —
+      trước đây 401 không để lại dòng log nào
+- [ ] Đo với nhiều bản sao backend, với OSRM thật, và trên mạng di động thật
+
+**Verify** — chạy lại được bằng một lệnh, xem [08 §8.14](08-van-hanh.md#814-test-tải-cmdloadgen).
+`TestDispatchLooksUpOnlyNearestCandidates` giữ cho G-20 không quay lại.
 
 ---
 
@@ -824,7 +836,7 @@ Cần dữ liệu chuyến thật mới có ý nghĩa — xếp sau pilot.
 | [G-17](05-doi-chieu-spec-code.md#g-17) clock chưa tiêm | [T-17](#t-17) | ✅ xong | 0 |
 | [G-18](05-doi-chieu-spec-code.md#g-18) SUSPENDED chết | [T-24](#t-24) | P2 | 4 |
 | [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | P2 | 4 |
-| [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) | P1 | 3 | 🟡 ETA đã theo lô; `drivers.Get` vẫn N+1 |
+| [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) · [T-35](#t-35) | P1 | 3 | ✅ ETA theo lô; số lần tra bị chặn bởi `max_candidates` (người gần nhất trước). Vẫn tra từng người một, nhưng tối đa 40 |
 | [G-21](05-doi-chieu-spec-code.md#g-21) token không thu hồi | [T-24](#t-24) | P2 | 4 | ✅ xong |
 | [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | P1 | 3 | 🟡 rate limit đã toàn cụm; chưa giới hạn riêng theo SĐT |
 | [G-23](05-doi-chieu-spec-code.md#g-23) trường chết ở pricing | [T-18](#t-18) | P2 | 1 |

@@ -70,6 +70,14 @@ type Config struct {
 	// khiển vận hành (phân tách bằng dấu phẩy). Rỗng = không ai vào được.
 	// Mặc định đóng: quyền quản trị phải cấp tường minh.
 	AdminPhones []string
+
+	// RateLimitRPS / RateLimitBurst là hạn mức request mỗi IP. Mặc định 30/60.
+	//
+	// Chỉnh được vì hai lý do thật: bộ sinh tải (cmd/loadgen) chạy từ một máy
+	// nên cả nghìn tài xế ảo chung một IP; và ở VN nhiều thuê bao di động ra
+	// Internet qua NAT của nhà mạng — một IP có thể là hàng trăm người dùng.
+	RateLimitRPS   int
+	RateLimitBurst int
 }
 
 func Load() (Config, error) {
@@ -93,6 +101,9 @@ func Load() (Config, error) {
 		DataResidency: get("DATA_RESIDENCY", "VN"),
 		DocumentsKey:  get("DOCUMENTS_KEY", ""),
 		AdminPhones:   getList("ADMIN_PHONES"),
+
+		RateLimitRPS:   getInt("RATE_LIMIT_RPS", 30),
+		RateLimitBurst: getInt("RATE_LIMIT_BURST", 60),
 
 		MoMoPartnerCode: get("MOMO_PARTNER_CODE", ""),
 		MoMoAccessKey:   get("MOMO_ACCESS_KEY", ""),

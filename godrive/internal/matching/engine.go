@@ -2,6 +2,7 @@ package matching
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/example/godrive/internal/driver"
@@ -306,14 +307,37 @@ func (e *Engine) candidates(ctx context.Context, t *trip.Trip, radius float64, c
 	}
 	now := e.clk.Now()
 
+	// Xét từ GẦN ra XA và dừng khi đủ MaxCandidates người hợp lệ.
+	//
+	// Mỗi ứng viên tốn hai truy vấn (hồ sơ + số dư sổ cái). Trước đây mọi tài
+	// xế trong bán kính đều được tra, trong khi mỗi vòng chỉ mời BatchSize
+	// người: test tải T-35 với 5.000 tài xế cho thấy một vòng quét hơn 1.000
+	// ứng viên, CSDL nghẽn, API chậm cả giây, rồi broker MQTT quá hạn khi hỏi
+	// xác thực và ngắt kết nối hàng loạt. Tài xế ở xa có ETA lớn hơn hẳn nên
+	// gần như không bao giờ lọt vào BatchSize người được mời — cắt ở đây không
+	// đổi kết quả chấm điểm trên thực tế.
+	sort.Slice(snaps, func(i, j int) bool {
+		return geo.DistanceM(snaps[i].Point, t.Pickup.Point) < geo.DistanceM(snaps[j].Point, t.Pickup.Point)
+	})
+	limit := cfg.MaxCandidates
+	if limit <= 0 {
+		limit = len(snaps)
+	}
+	// Xét ít người hơn số người được mời là vòng nào cũng mời thiếu. Tự nâng
+	// thay vì bắt vận hành sửa hai ô cấu hình cho khớp nhau.
+	limit = max(limit, cfg.BatchSize)
+
 	// Lọc điều kiện TRƯỚC, tính ETA SAU: không hỏi dịch vụ bản đồ về những tài
 	// xế chắc chắn không dùng được (chưa duyệt hồ sơ, đang nợ quá hạn mức).
 	type cand struct {
 		snap location.Snapshot
 		drv  *driver.Driver
 	}
-	eligible := make([]cand, 0, len(snaps))
+	eligible := make([]cand, 0, min(len(snaps), limit))
 	for _, s := range snaps {
+		if len(eligible) >= limit {
+			break
+		}
 		d, err := e.drivers.Get(ctx, s.DriverID)
 		if err != nil {
 			continue

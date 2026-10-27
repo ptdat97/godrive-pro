@@ -136,6 +136,9 @@ func SchemaFor(k Key) []Section {
 					f("empty_round_wait_seconds", "Chờ giữa hai vòng rỗng", KindSeconds, 1, 60, ""),
 					f("min_battery_pc", "Pin tối thiểu", KindInt, 0, 50,
 						"Máy sắp hết pin thì không mời, tránh rớt giữa chuyến."),
+					f("max_candidates", "Số ứng viên xét mỗi vòng", KindInt, 5, 500,
+						"Chỉ chấm điểm bấy nhiêu tài xế GẦN NHẤT. Tăng lên là tăng tải CSDL theo "+
+							"từng chuyến. Nhỏ hơn số tài xế mời mỗi vòng thì tự nâng bằng số đó."),
 				},
 			},
 			{

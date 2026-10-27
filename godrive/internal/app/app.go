@@ -408,14 +408,14 @@ func (a *App) Router() http.Handler {
 	admin.NewHandler(a.Admin, a.Issuer, a.adminAuth).Register(mux)
 	settings.NewHandler(a.Settings, a.Issuer, a.Admin).Register(mux)
 
-	// 30 request/giây, burst 60 cho mỗi IP.
+	// Mặc định 30 request/giây, burst 60 cho mỗi IP (RATE_LIMIT_RPS/BURST).
 	// Rate limit toàn cụm khi có Redis: bản in-process cho mỗi pod một hạn mức
 	// riêng, nên chạy 5 pod nghĩa là kẻ tấn công được gấp 5 lần hạn mức.
 	var rateLimit httpx.Middleware
 	if a.Redis != nil {
-		rateLimit = httpx.NewRedisRateLimit(a.Redis.Raw(), redisx.KeyPrefix, 30, 60).Middleware()
+		rateLimit = httpx.NewRedisRateLimit(a.Redis.Raw(), redisx.KeyPrefix, float64(a.Cfg.RateLimitRPS), float64(a.Cfg.RateLimitBurst)).Middleware()
 	} else {
-		rateLimit = httpx.NewRateLimit(30, 60).Middleware()
+		rateLimit = httpx.NewRateLimit(float64(a.Cfg.RateLimitRPS), float64(a.Cfg.RateLimitBurst)).Middleware()
 	}
 	return httpx.Chain(mux,
 		httpx.RequestID(),

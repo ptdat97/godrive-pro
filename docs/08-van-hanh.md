@@ -54,6 +54,7 @@ Nguồn: [`internal/config/config.go`](../godrive/internal/config/config.go)
 | `SHUTDOWN_WAIT` | `15s` | thời gian tắt êm |
 | `DATA_RESIDENCY` | `VN` | ghi chú tuân thủ NĐ 13/2023 |
 | **`ADMIN_PHONES`** | *(rỗng)* | danh sách SĐT được vào bảng điều khiển, ngăn cách bằng dấu phẩy. **Rỗng = không ai vào được** |
+| `RATE_LIMIT_RPS` / `RATE_LIMIT_BURST` | `30` / `60` | hạn mức request mỗi IP. Nhiều thuê bao di động VN ra Internet qua NAT nhà mạng — một IP có thể là hàng trăm người; theo dõi tỉ lệ `429` sau khi ra mắt. Bộ sinh tải cần đặt rất lớn |
 | **`DOCUMENTS_KEY`** | *(rỗng)* | Khoá AES-256 (32 byte hex hoặc base64) mã hoá CCCD/GPLX. Rỗng ⇒ lưu **thô**. Sinh: `openssl rand -hex 32` |
 | `MOMO_PARTNER_CODE` / `MOMO_ACCESS_KEY` / `MOMO_SECRET_KEY` | *(rỗng)* | Bật cổng MoMo. Thiếu `SECRET_KEY` ⇒ cổng **không** được bật |
 | `ZALOPAY_APP_ID` / `ZALOPAY_KEY2` | *(rỗng)* | Bật cổng ZaloPay |
@@ -659,3 +660,88 @@ location.Ingest (ping hợp lệ, tài xế có khách) ─ gọi thẳng ─→
 > backend đang chạy chết theo — `TestRiderReceivesOwnTripPushOverBroker` đỏ khi chạy cả gói nhưng
 > xanh khi chạy riêng. Cho backend đó chạy không có `NATS_URL` (bus trong tiến trình + outbox), hoặc
 > trỏ vào một NATS khác.
+
+---
+
+## 8.14 Test tải (`cmd/loadgen`)
+
+Bộ sinh tải đóng vai **thiết bị thật**: tài xế ảo nối MQTT bằng token của chính họ, gửi vị trí, nhận lời
+mời qua tin đẩy, "nghĩ" 0,3–1,5 giây rồi bấm nhận, chạy trọn chuyến; khách ảo đặt xe qua HTTP và nghe
+trạng thái chuyến qua MQTT. Mọi số đo lấy **từ phía thiết bị** — thứ người dùng cảm nhận, gồm cả broker.
+
+```bash
+# backend cần: DEV_AUTH=true · ADMIN_PHONES=0900000099 · RATE_LIMIT_RPS/BURST thật lớn
+# (mọi thiết bị ảo chung một IP) · không bật cổng thanh toán (bộ sinh tải nạp ví bằng endpoint dev)
+go run ./cmd/loadgen -drivers 1000 -ping 4s -trip-rate 5 -duration 3m
+```
+
+| Cờ | Ý nghĩa |
+|---|---|
+| `-drivers`, `-ping` | số tài xế online và chu kỳ gửi vị trí → bản tin/phút = drivers × 60 / ping |
+| `-trip-rate` | số chuyến đặt mỗi giây |
+| `-accept` | xác suất tài xế nhận một lời mời (mặc định 0,85) |
+| `-trip-step` | thời gian mỗi bước chuyến (tới đón → bắt đầu → hoàn tất), rút gọn để quay vòng nhanh |
+| `-radius` | bán kính rải tài xế và điểm đón quanh Quận 1 |
+
+Báo cáo in p50/p95/p99 phía thiết bị, đối chiếu với mục tiêu, cộng các histogram phía máy chủ chỉ tính
+phần phát sinh trong pha đo. **Chạy cùng máy với backend** — `offer_delivery` so giờ tạo lời mời ở máy
+chủ với giờ nhận ở thiết bị, chạy khác máy là cộng cả độ lệch đồng hồ.
+
+> **Không chạy vào môi trường thật.** Mỗi lần chạy tạo hàng nghìn tài khoản, tài xế đã duyệt KYC và
+> bút toán nạp ví. Dùng CSDL riêng, xoá đi sau khi đo.
+
+### Kết quả đo — 2026-10-27
+
+Một máy **Apple M4, 10 lõi, 16 GB**: backend (1 tiến trình), Postgres 18 (cài trên máy), Redis, NATS 2.10
+và EMQX 5.6 (Docker), bộ sinh tải — **tất cả trên cùng một máy**. Backend nối CSDL bằng role
+`godrive_app`, log mức `warn`. Bán kính rải 3 km — dày đặc hơn hẳn thực tế, tức là kịch bản xấu cho
+dispatcher.
+
+| Kịch bản | Vị trí/phút | Lời mời → tài xế p95 | Vị trí → khách p95 | API p95 chậm nhất | Lỗi | Backend |
+|---|---|---|---|---|---|---|
+| 1.000 tài xế, ping 4s, 5 chuyến/s | 15.000 | **4 ms** | 2 ms | 9 ms (`quotes`, `accept`) | 0 | ≤ 0,33 lõi · 37 MB |
+| 1.000 tài xế, ping 0,6s, 5 chuyến/s | **100.000** | **5 ms** | 3 ms | 13 ms (`quotes`) | 0 | ≤ 0,6 lõi · 38 MB |
+| 5.000 tài xế, 20 chuyến/s — **trước khi sửa** | 31.854 *(đáng lẽ 75.000)* | 737 ms | **7,2 s ❌** | 7,2 s ❌ | 103.400 ping lỗi · 5.151 lần mất kết nối | 2,6 lõi · 463 MB |
+| 5.000 tài xế, 20 chuyến/s — **sau khi sửa** | 75.000 | **16 ms** | 17 ms | 71 ms (`quotes`) | 0 | ≤ 0,95 lõi · 46 MB |
+
+**Ngâm 10 phút** — 2.000 tài xế, 10 chuyến/giây, 312.218 bản tin vị trí, 5.952 chuyến: lời mời p95
+**5 ms**, mọi API p95 ≤ 15 ms, mọi chuyến về `PAID`. RSS backend **đứng yên ~38 MB** từ phút thứ nhất
+tới phút thứ mười (lấy mẫu mỗi 30 giây), RAM EMQX đứng yên ~666 MB — không thấy rò rỉ trong khoảng này.
+
+> Trong bài ngâm, Redis trên cổng 6379 **bị thay giữa chừng** (một bản Redis khác lên thay ở phút
+> thứ hai — sự cố của máy đo, không phải của hệ thống). 48 request `POST /v1/quotes` bị từ chối
+> `revocation_check_failed` đúng lúc đó: kiểm tra thu hồi phiên **fail-closed** đúng thiết kế, rồi hệ
+> thống tự hồi phục, không cần khởi động lại. Trước lần này lỗi đó **không để lại dòng log nào**; nay
+> middleware ghi nguyên nhân ở mức `warn`.
+
+Mọi chuyến đặt trong pha đo đều về `PAID` (trừ kịch bản trước khi sửa: 389 chuyến `EXPIRED`).
+"Khách bấm đặt → thấy có tài xế" p95 khoảng **1,2–1,3 giây**, phần lớn là thời gian tài xế ảo "nghĩ".
+
+### Điểm gãy tìm được và cách sửa
+
+Ở 5.000 tài xế, hai lỗi chồng lên nhau thành **vòng xoáy**:
+
+1. **Dispatcher tra CSDL cho MỌI tài xế trong bán kính** (G-20) — hai truy vấn mỗi người (hồ sơ + cộng
+   số dư sổ cái), trong khi mỗi vòng chỉ mời 5 người. Một vòng quét hơn 1.000 ứng viên; CSDL nghẽn, API
+   chậm lên hàng giây. **Sửa:** xét từ gần ra xa, dừng khi đủ `max_candidates` người hợp lệ (mặc định
+   40, chỉnh ở trang cấu hình nhóm `matching`). Kiểm bằng `TestDispatchLooksUpOnlyNearestCandidates`.
+2. **EMQX gọi về backend để xác thực/phân quyền qua đúng 8 kết nối** (`pool_size = 8`). Backend chậm →
+   hàng đợi đầy → **38.145 lần quá hạn** → quá hạn bị coi là từ chối → `deny_action = disconnect` ngắt
+   thiết bị → thiết bị nối lại lại gọi xác thực. **Sửa:** `pool_size = 64` và cache phân quyền 5 phút
+   (luật topic chỉ phụ thuộc danh tính; khoá tài khoản chặn ở bước kết nối, không trông vào cache).
+
+Hai sửa đổi được áp **cùng lúc** nên số đo không tách được phần đóng góp của từng cái.
+
+> **Bài học vận hành:** khi backend chậm, triệu chứng đầu tiên **không** nằm ở API mà ở MQTT — tài xế
+> rớt mạng hàng loạt. Theo dõi `http_connector_do_request_failed` trong log EMQX song song với
+> `godrive_http_request_duration_seconds`.
+
+### Chưa đo
+
+- **Ngâm 24 giờ** — mới chạy 10 phút (ở trên)
+- **Nhiều bản sao backend** dưới tải — các số trên là một tiến trình
+- **OSRM** — các lần đo dùng ETA ước lượng đường chim bay; OSRM thêm một lời gọi mạng mỗi vòng ghép
+- **Mạng di động thật** — mọi thứ chạy qua localhost; độ trễ 4G cộng thêm vào `offer_delivery`
+- `POST /v1/quotes` là API chậm nhất (p95 71 ms ở 5.000 tài xế): hệ số tăng giá đếm tài xế rảnh bằng
+  cách nạp mọi vị trí trong bán kính. Ổn ở mật độ thực tế, nhưng là chỗ đầu tiên chạm trần
+

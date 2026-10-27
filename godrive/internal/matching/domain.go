@@ -108,6 +108,9 @@ type Config struct {
 	// tìm được ứng viên nào. Ngắn quá thì quét lại vô ích, dài quá thì khách chờ.
 	EmptyRoundWait time.Duration
 	MinBatteryPc   int
+	// MaxCandidates là số ứng viên hợp lệ GẦN NHẤT được xét mỗi vòng. 0 = xét
+	// hết (chỉ dùng trong test). Xem chú thích ở Engine.candidates.
+	MaxCandidates int
 
 	// DebtLimit là hạn mức công nợ dùng để lọc ứng viên. Nằm ở đây thay vì đọc
 	// hằng số của module driver, để đổi từ bảng điều khiển có hiệu lực ngay.
@@ -137,6 +140,7 @@ func DefaultConfig() Config {
 		OfferTTL:       15 * time.Second,
 		EmptyRoundWait: 2 * time.Second,
 		MinBatteryPc:   15,
+		MaxCandidates:  40,
 		DebtLimit:      driver.DefaultDebtLimit,
 
 		WeightETA:        1.0,  // mỗi giây ETA = 1 điểm phạt

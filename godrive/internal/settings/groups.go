@@ -251,6 +251,7 @@ type MatchingGroup struct {
 	OfferTTLSeconds    int     `json:"offer_ttl_seconds"`
 	EmptyRoundWaitSecs int     `json:"empty_round_wait_seconds"`
 	MinBatteryPc       int     `json:"min_battery_pc"`
+	MaxCandidates      int     `json:"max_candidates"`
 	WeightETA          float64 `json:"weight_eta"`
 	WeightRating       float64 `json:"weight_rating"`
 	WeightAcceptance   float64 `json:"weight_acceptance"`
@@ -263,8 +264,8 @@ func DefaultMatching() MatchingGroup {
 	return MatchingGroup{
 		InitialRadiusM: 1500, RadiusStepM: 1500, MaxRadiusM: 5000,
 		MaxRounds: 3, BatchSize: 5, OfferTTLSeconds: 15, EmptyRoundWaitSecs: 2,
-		MinBatteryPc: 15,
-		WeightETA:    1.0, WeightRating: 60, WeightAcceptance: 90,
+		MinBatteryPc: 15, MaxCandidates: 40,
+		WeightETA: 1.0, WeightRating: 60, WeightAcceptance: 90,
 		WeightIdle: 0.25, WeightHeading: 0.20,
 	}
 }
@@ -298,6 +299,9 @@ func (m MatchingGroup) Validate() error {
 		return err
 	}
 	if err := num("Pin tối thiểu (%)", float64(m.MinBatteryPc), 0, 50); err != nil {
+		return err
+	}
+	if err := num("Số ứng viên xét mỗi vòng", float64(m.MaxCandidates), 5, 500); err != nil {
 		return err
 	}
 	for name, w := range map[string]float64{

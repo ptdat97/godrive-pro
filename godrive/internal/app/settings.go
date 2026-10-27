@@ -66,9 +66,9 @@ func (a *App) wireSettings() {
 			MaxRadiusM: g.MaxRadiusM, MaxRounds: g.MaxRounds, BatchSize: g.BatchSize,
 			OfferTTL:       time.Duration(g.OfferTTLSeconds) * time.Second,
 			EmptyRoundWait: time.Duration(g.EmptyRoundWaitSecs) * time.Second,
-			MinBatteryPc:   g.MinBatteryPc,
-			DebtLimit:      money.VND(w.DebtLimitVND),
-			WeightETA:      g.WeightETA, WeightRating: g.WeightRating,
+			MinBatteryPc:   g.MinBatteryPc, MaxCandidates: g.MaxCandidates,
+			DebtLimit: money.VND(w.DebtLimitVND),
+			WeightETA: g.WeightETA, WeightRating: g.WeightRating,
 			WeightAcceptance: g.WeightAcceptance, WeightIdle: g.WeightIdle,
 			WeightHeading: g.WeightHeading, WeightCancel: g.WeightCancel,
 		}
