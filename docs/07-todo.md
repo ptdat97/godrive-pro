@@ -6,7 +6,7 @@
 > `GĐ` = giai đoạn trong [06 — Kế hoạch triển khai](06-ke-hoach-trien-khai.md).
 > `G-xx` = mã gap trong [05 — Đối chiếu spec ↔ code](05-doi-chieu-spec-code.md).
 
-**Tiến độ:** **27 / 28** — GĐ 0, 1, 2 xong · GĐ 3 xong phần hạ tầng · GĐ 4 xong đường tiền và hai chốt bảo mật
+**Tiến độ (T-01…T-28):** **24 / 28 xong** · 🟡 T-21, T-24 xong một phần · chưa làm T-11, T-23 — đếm lại 2026-10-27 theo dấu ở từng mục
 
 | GĐ | Xong | Còn |
 |---|---|---|
@@ -14,7 +14,7 @@
 | GĐ 1 — Bền dữ liệu & đúng tiền | ✅ T-02, T-03, T-05, T-09, T-12, T-13, T-18 | — |
 | GĐ 2 — Đúng nghiệp vụ | ✅ T-04, T-06, T-07, T-10, T-19, T-20 | — |
 | GĐ 3 — Hạ tầng | ✅ T-25 · ✅ T-21 (Redis, NATS, MQTT, OSRM; H3 chưa) | T-11 (cần credential FCM) |
-| GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC, hạn giấy tờ chưa) | T-23, T-26 |
+| GĐ 4 — Thương mại | ✅ T-22 (cổng thanh toán + đối soát) · ✅ T-26 · 🟡 T-24 (mã hoá + thu hồi token xong; eKYC chưa) | T-23 |
 | Chưa xếp | ✅ T-27 (quyền CSDL + trigger + tự kiểm lúc khởi động) · ✅ T-28 | — |
 | Trước app | ✅ T-32 · ✅ T-31 (lời mời p95 5–16 ms, đo ở T-35) | T-33 (cần credential FCM/APNs) |
 
@@ -442,14 +442,32 @@ go test ./internal/payment/... -run TestWebhookRejectsBadSignature
 
 ---
 
-### <a id="t-26"></a>T-26 · Phân trang thật cho admin `[G-19]` `P2`
+### <a id="t-26"></a>T-26 · ✅ Phân trang thật cho admin `[G-19]` `P2`
 
-- [ ] Thay "lặp qua từng trạng thái rồi hợp lại" bằng **một** truy vấn `WHERE status = ANY($1)` + keyset pagination
-- [ ] `Repository` thêm `List(ctx, filter, cursor, limit)`
-- [ ] `Overview` dùng `COUNT(*)` thay vì đếm bằng cách nạp tối đa 200 dòng/trạng thái
-- [ ] Giao diện: nút "tải thêm" thay vì cắt cứng
+Trước đây danh sách "lặp qua từng trạng thái, mỗi trạng thái lấy tối đa N dòng rồi hợp lại", và trang
+tổng quan đếm bằng cách nạp tối đa 200 dòng mỗi trạng thái. Hệ quả ở quy mô thật: **mọi con số dừng ở
+200**, doanh thu chỉ cộng 200 chuyến bất kỳ — mà trông vẫn như một con số thật. Gauge
+`godrive_drivers_idle` cũng dừng ở 1.000.
 
-**Verify** — 10.000 tài xế trong CSDL → `GET /v1/admin/drivers?limit=50` trả **đúng** 50 dòng đầu theo thứ tự ổn định, phân trang hết được toàn bộ
+- [x] Một truy vấn với bộ lọc ở CSDL (`status = ANY`, KYC, thành phố, tìm kiếm `ILIKE` có thoát ký tự
+      đại diện, nợ) + **keyset pagination** theo `(created_at, id)` / `(requested_at, id)` giảm dần
+- [x] `driver.Repository.List`, `trip.Repository.List` ở cả bản bộ nhớ lẫn Postgres; con trỏ mờ ở
+      [pkg/page](../godrive/pkg/page/page.go)
+- [x] Tổng quan đếm bằng `COUNT(*)`/`SUM` (`driver.Counts`, `trip.Stats`), kể cả cảnh báo nợ và giấy tờ.
+      Chuyến xong/huỷ và doanh thu tính **từ 0 giờ hôm nay** — cộng trên toàn bộ lịch sử là quét cả bảng
+      chuyến mỗi lần mở trang. Chuyến đang chạy vẫn đếm tức thời (chỉ mục một phần riêng)
+- [x] Migration `0012`: chỉ mục khớp thứ tự phân trang + chỉ mục một phần cho chuyến đang diễn ra
+- [x] Giao diện: "Trang sau →" / "Về trang đầu" ở danh sách tài xế và chuyến; trang tổng quan ghi rõ "hôm nay"
+- [x] **Đổi thứ tự** danh sách tài xế từ "nợ/chờ duyệt lên đầu" sang "mới đăng ký trước": thứ tự cũ
+      không phân trang ổn định được. Hai nhóm cần chú ý đã có bộ lọc riêng (`debt=1`, `kyc=PENDING`)
+
+**Verify** — `TestPostgresDriverPaginationCoversAll`: **10.000 tài xế**, trang đầu đúng 50 dòng, hai lần
+tải giống hệt nhau, đi hết 200 trang được đúng 10.000 không lặp; tổng quan đếm đủ 10.000 (trước: 200) ·
+`TestPostgresPaginationStableUnderInserts` · `TestPostgresDriverFiltersPageCorrectly` ·
+`TestTripPaginationCoversAll` · `TestPostgresDocumentCountsMatchAlertRules` (luật giấy tờ bằng SQL khớp
+`Documents.Alerts`) · `TestPostgresOverviewTodayWindow`. Kiểm ngược: bỏ khoá phụ `id` khỏi keyset → đi hết
+các trang chỉ được 5.050/10.000. Đã tải trang `/drivers` qua `next dev` với phiên quản trị thật: 50 + 10
+dòng, không trùng.
 
 ---
 
@@ -835,7 +853,7 @@ Cần dữ liệu chuyến thật mới có ý nghĩa — xếp sau pilot.
 | [G-16](05-doi-chieu-spec-code.md#g-16) lệch Version | [T-16](#t-16) | ✅ xong | 0 |
 | [G-17](05-doi-chieu-spec-code.md#g-17) clock chưa tiêm | [T-17](#t-17) | ✅ xong | 0 |
 | [G-18](05-doi-chieu-spec-code.md#g-18) SUSPENDED chết | [T-24](#t-24) | P2 | 4 |
-| [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | P2 | 4 |
+| [G-19](05-doi-chieu-spec-code.md#g-19) phân trang giả | [T-26](#t-26) | ✅ xong | 4 |
 | [G-20](05-doi-chieu-spec-code.md#g-20) N+1 candidates | [T-21](#t-21) · [T-35](#t-35) | P1 | 3 | ✅ ETA theo lô; số lần tra bị chặn bởi `max_candidates` (người gần nhất trước). Vẫn tra từng người một, nhưng tối đa 40 |
 | [G-21](05-doi-chieu-spec-code.md#g-21) token không thu hồi | [T-24](#t-24) | P2 | 4 | ✅ xong |
 | [G-22](05-doi-chieu-spec-code.md#g-22) OTP không giới hạn theo SĐT | [T-21](#t-21) | P1 | 3 | 🟡 rate limit đã toàn cụm; chưa giới hạn riêng theo SĐT |

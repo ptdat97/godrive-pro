@@ -101,6 +101,9 @@ func alertLevel(days int) string {
 	}
 }
 
+// TodayVN là ngày hiện tại theo giờ Việt Nam — mốc so hạn giấy tờ.
+func TodayVN(now time.Time) time.Time { return dateOf(now.In(vnZone)) }
+
 func dateOf(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())

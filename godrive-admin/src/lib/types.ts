@@ -113,6 +113,8 @@ export interface Overview {
   };
   alerts: Alert[];
   generated_at: string;
+  /** Mốc tính số liệu "hôm nay": 0 giờ theo giờ Việt Nam. */
+  since: string;
 }
 
 export interface LiveDriver {

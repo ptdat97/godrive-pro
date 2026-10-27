@@ -10,6 +10,7 @@ import (
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/id"
 	"github.com/example/godrive/pkg/money"
+	"github.com/example/godrive/pkg/page"
 )
 
 // DefaultDebtLimit là hạn mức MẶC ĐỊNH: tài xế được nợ tối đa 200.000đ tiền
@@ -300,6 +301,16 @@ func (s *Service) Get(ctx context.Context, driverID string) (*Driver, error) {
 
 func (s *Service) GetByAccount(ctx context.Context, accountID string) (*Driver, error) {
 	return s.repo.GetByAccount(ctx, accountID)
+}
+
+// List trả một trang tài xế, mới đăng ký trước. Xem Repository.List.
+func (s *Service) List(ctx context.Context, f ListFilter, after page.Cursor, limit int) ([]*Driver, error) {
+	return s.repo.List(ctx, f, after, limit)
+}
+
+// Counts đếm cho trang tổng quan, dùng hạn mức nợ đang hiệu lực.
+func (s *Service) Counts(ctx context.Context) (Counts, error) {
+	return s.repo.Counts(ctx, s.clk.Now(), s.limit(ctx))
 }
 
 // ListByStatus liệt kê tài xế theo trạng thái, dùng cho bảng điều khiển vận hành.

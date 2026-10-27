@@ -19,6 +19,7 @@ import {
   kycTone,
 } from "@/components/ui";
 import DriverFilters from "./filters";
+import Pager from "@/components/pager";
 import type { DriverRow } from "@/lib/types";
 
 export const metadata = { title: "Tài xế · GoDrive" };
@@ -42,12 +43,20 @@ export default async function DriversPage({ searchParams }: Props) {
     if (v) qs.set(key, v);
   }
 
+  const cursor = one("cursor");
+  const pageQs = new URLSearchParams(qs);
+  if (cursor) pageQs.set("cursor", cursor);
+
   let rows: DriverRow[];
+  let nextCursor: string | undefined;
   try {
-    const res = await api.get<{ drivers: DriverRow[]; count: number }>(
-      `/v1/admin/drivers?${qs.toString()}`,
-    );
+    const res = await api.get<{
+      drivers: DriverRow[];
+      count: number;
+      next_cursor?: string;
+    }>(`/v1/admin/drivers?${pageQs.toString()}`);
     rows = res.drivers;
+    nextCursor = res.next_cursor || undefined;
   } catch (err) {
     const e = err as GoDriveError;
     return <ErrorBox code={e.code} message={e.message} traceId={e.traceId} />;
@@ -58,7 +67,8 @@ export default async function DriversPage({ searchParams }: Props) {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Tài xế</h1>
         <p className="mt-0.5 text-sm text-zinc-500">
-          {rows.length} tài xế khớp bộ lọc
+          {rows.length} tài xế {cursor || nextCursor ? "trên trang này" : "khớp bộ lọc"}
+          {" · "}mới đăng ký trước
         </p>
       </div>
 
@@ -153,6 +163,8 @@ export default async function DriversPage({ searchParams }: Props) {
           ))}
         </Table>
       </Card>
+
+      <Pager path="/drivers" params={qs} cursor={cursor} nextCursor={nextCursor} />
     </div>
   );
 }

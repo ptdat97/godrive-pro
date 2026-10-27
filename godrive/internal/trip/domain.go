@@ -11,6 +11,7 @@ import (
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/geo"
 	"github.com/example/godrive/pkg/money"
+	"github.com/example/godrive/pkg/page"
 )
 
 type Status string
@@ -142,6 +143,30 @@ type Message struct {
 	Payload any
 }
 
+// LiveStatuses là các trạng thái "đang diễn ra". Có chỉ mục riêng (migration
+// 0012) nên đếm chúng không phải quét cả bảng chuyến.
+var LiveStatuses = []Status{StatusSearching, StatusAssigned, StatusArrived, StatusInProgress, StatusCompleted}
+
+// Stats là số liệu cho trang tổng quan.
+//
+// Hai khung thời gian khác nhau, có chủ ý: chuyến ĐANG diễn ra đếm tức thời
+// bất kể đặt từ bao giờ; còn chuyến đã xong, đã huỷ và tiền chỉ tính từ mốc
+// since. Cộng tiền trên toàn bộ lịch sử là quét cả bảng chuyến — bảng lớn mãi
+// theo thời gian — mỗi lần có người mở trang tổng quan.
+type Stats struct {
+	// Live: số chuyến theo trạng thái trong LiveStatuses, tính tức thời.
+	Live map[Status]int
+	// Since: số chuyến đặt từ mốc since, theo trạng thái hiện tại.
+	Since map[Status]int
+	// Tiền tính trên chuyến COMPLETED hoặc PAID đặt từ mốc since.
+	Gross       money.VND
+	PlatformFee money.VND
+	DriverEarn  money.VND
+	// Finished / FinishedCash: số chuyến COMPLETED+PAID, và trong đó trả tiền mặt.
+	Finished     int
+	FinishedCash int
+}
+
 type Repository interface {
 	Create(ctx context.Context, t *Trip) error
 	Get(ctx context.Context, id string) (*Trip, error)
@@ -162,6 +187,11 @@ type Repository interface {
 	// khách vẫn đang chờ một tin nữa.
 	ActiveByRider(ctx context.Context, riderID string) (*Trip, error)
 	ListByStatus(ctx context.Context, s Status, limit int) ([]*Trip, error)
+	// List trả một trang chuyến, mới đặt trước (requested_at, id giảm dần).
+	// statuses rỗng = mọi trạng thái.
+	List(ctx context.Context, statuses []Status, after page.Cursor, limit int) ([]*Trip, error)
+	// Stats đếm và cộng tiền cho trang tổng quan bằng CSDL, không nạp dòng.
+	Stats(ctx context.Context, since time.Time) (Stats, error)
 	Events(ctx context.Context, tripID string) ([]Event, error)
 	// SetRating ghi điểm đánh giá. Chỉ ghi được MỘT lần: trả Conflict nếu
 	// chuyến đã có điểm — khách không được sửa đánh giá để trả thù tài xế.

@@ -97,10 +97,10 @@ export default async function OverviewPage() {
             tone={ov.trips.searching > 0 ? "amber" : "neutral"}
           />
           <Stat label="Đang thực hiện" value={ov.trips.active} tone="blue" />
-          <Stat label="Hoàn tất" value={ov.trips.completed} tone="green" />
-          <Stat label="Đã huỷ" value={ov.trips.cancelled} />
+          <Stat label="Hoàn tất hôm nay" value={ov.trips.completed} tone="green" />
+          <Stat label="Đã huỷ hôm nay" value={ov.trips.cancelled} />
           <Stat
-            label="Không tìm được tài xế"
+            label="Không tìm được tài xế hôm nay"
             value={ov.trips.expired}
             tone={ov.trips.expired > 0 ? "red" : "neutral"}
           />
@@ -109,7 +109,7 @@ export default async function OverviewPage() {
 
       <section>
         <h2 className="mb-3 text-sm font-semibold text-zinc-700">
-          Doanh thu (chuyến đã hoàn tất)
+          Doanh thu hôm nay (chuyến đặt từ 0 giờ, đã hoàn tất)
         </h2>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="Tổng cước" value={vnd(ov.money.gross)} />

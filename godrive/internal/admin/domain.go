@@ -19,6 +19,7 @@ import (
 	"github.com/example/godrive/internal/wallet"
 	"github.com/example/godrive/pkg/geo"
 	"github.com/example/godrive/pkg/money"
+	"github.com/example/godrive/pkg/page"
 )
 
 // ==== Port: những gì admin cần từ các module khác ====
@@ -28,12 +29,16 @@ type DriverPort interface {
 	ListByStatus(ctx context.Context, s driver.Status, limit int) ([]*driver.Driver, error)
 	ReviewKYC(ctx context.Context, driverID string, approved bool) error
 	UpdateDocumentDates(ctx context.Context, driverID string, in driver.DocumentDates) (*driver.Driver, error)
+	List(ctx context.Context, f driver.ListFilter, after page.Cursor, limit int) ([]*driver.Driver, error)
+	Counts(ctx context.Context) (driver.Counts, error)
 }
 
 type TripPort interface {
 	Get(ctx context.Context, tripID string) (*trip.Trip, error)
 	ListByStatus(ctx context.Context, s trip.Status, limit int) ([]*trip.Trip, error)
 	Events(ctx context.Context, tripID string) ([]trip.Event, error)
+	List(ctx context.Context, statuses []trip.Status, after page.Cursor, limit int) ([]*trip.Trip, error)
+	Stats(ctx context.Context, since time.Time) (trip.Stats, error)
 }
 
 type LocationPort interface {
@@ -170,7 +175,7 @@ type Overview struct {
 	} `json:"trips"`
 
 	Money struct {
-		// GrossToday là tổng cước của các chuyến đã hoàn tất trong danh sách đọc được.
+		// Gross là tổng cước của chuyến đã hoàn tất đặt từ mốc Since.
 		Gross       money.VND `json:"gross"`
 		PlatformFee money.VND `json:"platform_fee"`
 		DriverEarn  money.VND `json:"driver_earn"`
@@ -179,6 +184,10 @@ type Overview struct {
 
 	// Alerts là những thứ vận hành cần để mắt tới ngay.
 	Alerts []Alert `json:"alerts"`
+
+	// Since là mốc tính chuyến hoàn tất/huỷ/hết hạn và tiền: 0 giờ hôm nay theo
+	// giờ VN. Chuyến đang chờ ghép và đang chạy là số tức thời, không theo mốc.
+	Since time.Time `json:"since"`
 
 	GeneratedAt time.Time `json:"generated_at"`
 }

@@ -300,8 +300,19 @@ và số điện thoại phải nằm trong `ADMIN_PHONES`. Số ngoài danh sá
 
 | Endpoint | Tham số |
 |---|---|
-| `GET /v1/admin/drivers` | `status` · `kyc` · `city` · `q` (tên/SĐT/biển số) · `debt=1` · `limit` (≤200, mặc định 50) |
-| `GET /v1/admin/trips` | `status` · `limit` |
+| `GET /v1/admin/drivers` | `status` · `kyc` · `city` · `q` (tên/SĐT/biển số) · `debt=1` · `limit` (≤200, mặc định 50) · `cursor`. Thứ tự: **mới đăng ký trước** |
+| `GET /v1/admin/trips` | `status` · `limit` · `cursor`. Thứ tự: **mới đặt trước** |
+
+**Phân trang (T-26):** phản hồi có `next_cursor`; gửi lại nguyên văn ở `cursor=` để lấy trang sau,
+rỗng nghĩa là hết. Con trỏ là chuỗi mờ — đừng tự dựng. Keyset chứ không OFFSET: dòng mới chen vào
+giữa hai lần tải không làm trang sau lặp hay mất dòng. Con trỏ hỏng → `400 cursor_invalid`.
+
+`debt=1` lọc theo cột cache `drivers.wallet_balance` (có thể chậm vài giây so với sổ cái); cột
+`in_debt` trên từng dòng vẫn đọc sổ cái.
+
+**`GET /v1/admin/overview`:** chuyến đang chờ ghép / đang chạy là số **tức thời**; chuyến hoàn tất,
+đã huỷ, không tìm được tài xế và toàn bộ doanh thu tính trên chuyến **đặt từ 0 giờ hôm nay** (giờ VN,
+trường `since`). Mọi con số đếm bằng CSDL — trước T-26 chúng dừng ở 200.
 | `GET /v1/admin/live-map` | `lat` · `lng` (mặc định Chợ Bến Thành) · `radius` (m, mặc định 5.000, trần 50.000) · `idle=1` |
 
 > Trạng thái không hợp lệ trả **`400 status_invalid`** — *không* im lặng trả danh sách rỗng.

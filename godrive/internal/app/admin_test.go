@@ -78,10 +78,11 @@ func TestAdminListDriversJoinsWalletAndLocation(t *testing.T) {
 	a := newTestApp(t)
 	d := seedDriver(t, a, "0912345678", "Nguyễn Văn Tài", "59X1-123.45")
 
-	rows, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{})
+	rowsPage, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{})
 	if err != nil {
 		t.Fatalf("ListDrivers: %v", err)
 	}
+	rows := rowsPage.Items
 	if len(rows) != 1 {
 		t.Fatalf("phải có 1 tài xế, được %d", len(rows))
 	}
@@ -110,28 +111,31 @@ func TestAdminFilterByStatusAndQuery(t *testing.T) {
 	seedDriver(t, a, "0912345678", "Nguyễn Văn Tài", "59X1-123.45")
 	seedDriver(t, a, "0987654321", "Trần Thị Bình", "59Y2-678.90")
 
-	all, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{})
+	allPage, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{})
 	if err != nil {
 		t.Fatalf("ListDrivers: %v", err)
 	}
+	all := allPage.Items
 	if len(all) != 2 {
 		t.Fatalf("phải có 2 tài xế, được %d", len(all))
 	}
 
 	// Lọc theo tên.
-	byName, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{Query: "bình"})
+	byNamePage, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{Query: "bình"})
 	if err != nil {
 		t.Fatalf("lọc theo tên: %v", err)
 	}
+	byName := byNamePage.Items
 	if len(byName) != 1 || byName[0].FullName != "Trần Thị Bình" {
 		t.Fatalf("lọc theo tên sai: %+v", byName)
 	}
 
 	// Lọc theo biển số, không phân biệt hoa thường.
-	byPlate, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{Query: "59x1"})
+	byPlatePage, err := a.Admin.ListDrivers(ctx, admin.ListDriversInput{Query: "59x1"})
 	if err != nil {
 		t.Fatalf("lọc theo biển số: %v", err)
 	}
+	byPlate := byPlatePage.Items
 	if len(byPlate) != 1 || byPlate[0].VehiclePlate != "59X1-123.45" {
 		t.Fatalf("lọc theo biển số sai: %+v", byPlate)
 	}
@@ -228,10 +232,11 @@ func TestAdminTripsAndEvents(t *testing.T) {
 		t.Fatalf("Create trip: %v", err)
 	}
 
-	rows, err := a.Admin.ListTrips(ctx, admin.ListTripsInput{})
+	rowsPage, err := a.Admin.ListTrips(ctx, admin.ListTripsInput{})
 	if err != nil {
 		t.Fatalf("ListTrips: %v", err)
 	}
+	rows := rowsPage.Items
 	if len(rows) != 1 || rows[0].ID != tr.ID {
 		t.Fatalf("phải thấy đúng chuyến vừa tạo: %+v", rows)
 	}

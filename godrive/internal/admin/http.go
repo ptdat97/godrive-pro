@@ -112,12 +112,15 @@ func (h *Handler) listDrivers(w http.ResponseWriter, r *http.Request) {
 		Query:    q.Get("q"),
 		OnlyDebt: q.Get("debt") == "1",
 		Limit:    atoiOr(q.Get("limit"), 0),
+		Cursor:   q.Get("cursor"),
 	})
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"drivers": rows, "count": len(rows)})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"drivers": rows.Items, "count": len(rows.Items), "next_cursor": rows.NextCursor,
+	})
 }
 
 func (h *Handler) getDriver(w http.ResponseWriter, r *http.Request) {
@@ -189,12 +192,15 @@ func (h *Handler) listTrips(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.svc.ListTrips(r.Context(), ListTripsInput{
 		Status: q.Get("status"),
 		Limit:  atoiOr(q.Get("limit"), 0),
+		Cursor: q.Get("cursor"),
 	})
 	if err != nil {
 		httpx.Fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"trips": rows, "count": len(rows)})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"trips": rows.Items, "count": len(rows.Items), "next_cursor": rows.NextCursor,
+	})
 }
 
 func (h *Handler) getTrip(w http.ResponseWriter, r *http.Request) {

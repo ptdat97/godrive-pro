@@ -12,6 +12,7 @@ import {
 import { Badge, Card, ErrorBox, Table, Td, tripTone } from "@/components/ui";
 import Refresher from "@/components/refresher";
 import StatusTabs from "./status-tabs";
+import Pager from "@/components/pager";
 import type { TripRow } from "@/lib/types";
 
 export const metadata = { title: "Chuyến đi · GoDrive" };
@@ -25,15 +26,21 @@ export default async function TripsPage({ searchParams }: Props) {
   const sp = await searchParams;
   const status = typeof sp.status === "string" ? sp.status : "";
 
+  const cursor = typeof sp.cursor === "string" ? sp.cursor : "";
+
   const qs = new URLSearchParams();
   if (status) qs.set("status", status);
+  const pageQs = new URLSearchParams(qs);
+  if (cursor) pageQs.set("cursor", cursor);
 
   let rows: TripRow[];
+  let nextCursor: string | undefined;
   try {
-    const res = await api.get<{ trips: TripRow[] }>(
-      `/v1/admin/trips?${qs.toString()}`,
+    const res = await api.get<{ trips: TripRow[]; next_cursor?: string }>(
+      `/v1/admin/trips?${pageQs.toString()}`,
     );
     rows = res.trips;
+    nextCursor = res.next_cursor || undefined;
   } catch (err) {
     const e = err as GoDriveError;
     return <ErrorBox code={e.code} message={e.message} traceId={e.traceId} />;
@@ -44,7 +51,9 @@ export default async function TripsPage({ searchParams }: Props) {
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Chuyến đi</h1>
-          <p className="mt-0.5 text-sm text-zinc-500">{rows.length} chuyến</p>
+          <p className="mt-0.5 text-sm text-zinc-500">
+            {rows.length} chuyến{cursor || nextCursor ? " trên trang này" : ""} · mới đặt trước
+          </p>
         </div>
         <Refresher seconds={10} />
       </div>
@@ -136,6 +145,8 @@ export default async function TripsPage({ searchParams }: Props) {
           ))}
         </Table>
       </Card>
+
+      <Pager path="/trips" params={qs} cursor={cursor} nextCursor={nextCursor} />
     </div>
   );
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/example/godrive/pkg/errs"
+	"github.com/example/godrive/pkg/page"
 )
 
 type MemoryRepo struct {
@@ -126,4 +128,58 @@ func (r *MemoryRepo) filter(pred func(*Trip) bool, limit int) []*Trip {
 		out = out[:limit]
 	}
 	return out
+}
+
+func (r *MemoryRepo) List(_ context.Context, statuses []Status, after page.Cursor, limit int) ([]*Trip, error) {
+	want := map[Status]bool{}
+	for _, s := range statuses {
+		want[s] = true
+	}
+	r.mu.RLock()
+	out := []*Trip{}
+	for _, t := range r.trips {
+		if (len(want) == 0 || want[t.Status]) && after.Before(t.RequestedAt, t.ID) {
+			out = append(out, cloneTrip(t))
+		}
+	}
+	r.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].RequestedAt.Equal(out[j].RequestedAt) {
+			return out[i].RequestedAt.After(out[j].RequestedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r *MemoryRepo) Stats(_ context.Context, since time.Time) (Stats, error) {
+	live := map[Status]bool{}
+	for _, s := range LiveStatuses {
+		live[s] = true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	st := Stats{Live: map[Status]int{}, Since: map[Status]int{}}
+	for _, t := range r.trips {
+		if live[t.Status] {
+			st.Live[t.Status]++
+		}
+		if t.RequestedAt.Before(since) {
+			continue
+		}
+		st.Since[t.Status]++
+		if t.Status == StatusCompleted || t.Status == StatusPaid {
+			st.Finished++
+			st.Gross += t.Fare
+			st.PlatformFee += t.PlatformFee
+			st.DriverEarn += t.DriverEarn
+			if t.PaymentMethod == PayCash {
+				st.FinishedCash++
+			}
+		}
+	}
+	return st, nil
 }

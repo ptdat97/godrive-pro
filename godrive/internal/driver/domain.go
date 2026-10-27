@@ -7,6 +7,7 @@ import (
 
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/money"
+	"github.com/example/godrive/pkg/page"
 )
 
 type VehicleType string
@@ -221,4 +222,36 @@ type Repository interface {
 	// CAS của Reserve/SetStatus đang chạy song song.
 	UpdateWalletBalance(ctx context.Context, driverID string, bal money.VND) error
 	ListByStatus(ctx context.Context, s Status, limit int) ([]*Driver, error)
+	// List trả một trang tài xế theo thứ tự đăng ký mới nhất trước (created_at,
+	// id giảm dần). Lọc nằm ở tầng lưu trữ: lọc sau khi đã cắt trang thì trang
+	// nào cũng thiếu dòng.
+	List(ctx context.Context, f ListFilter, after page.Cursor, limit int) ([]*Driver, error)
+	// Counts đếm cho trang tổng quan — đếm thật bằng CSDL, không nạp dòng.
+	Counts(ctx context.Context, now time.Time, debtLimit money.VND) (Counts, error)
+}
+
+// ListFilter là bộ lọc danh sách tài xế. Trường rỗng = không lọc.
+type ListFilter struct {
+	Statuses []Status
+	KYC      KYCState
+	City     string
+	// Query khớp một phần, không phân biệt hoa thường, với tên, SĐT hoặc biển số.
+	Query string
+	// InDebtBeyond: chỉ tài xế có số dư cache dưới -giá trị này. 0 = không lọc.
+	// Đọc cột cache drivers.wallet_balance chứ không cộng sổ cái — cộng sổ cái
+	// cho mọi tài xế để lọc là đúng thứ không phân trang được. Cache có thể
+	// chậm vài giây so với sổ cái; cột "nợ" trên từng dòng vẫn đọc sổ cái.
+	InDebtBeyond money.VND
+}
+
+// Counts là số đếm cho trang tổng quan.
+type Counts struct {
+	ByStatus   map[Status]int
+	PendingKYC int
+	// InDebt: tài xế IDLE/OFFLINE có số dư cache dưới hạn mức nợ.
+	InDebt int
+	// DocsExpired / DocsExpiring: tài xế đã duyệt, chưa bị khoá, có giấy tờ
+	// đã hết hạn / hết hạn trong 7 ngày tới. Cùng quy tắc với Documents.Alerts.
+	DocsExpired  int
+	DocsExpiring int
 }

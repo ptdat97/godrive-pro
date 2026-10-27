@@ -83,11 +83,13 @@ func (a *App) registerGauges() {
 	idle := metrics.NewGauge(m.reg, "godrive_drivers_idle",
 		"số tài xế đang rảnh (sẵn sàng nhận chuyến)")
 	idle.Set(nil, func() float64 {
-		ds, err := a.Drivers.ListByStatus(context.Background(), driver.StatusIdle, 1000)
+		// Đếm bằng CSDL. Bản cũ nạp tối đa 1.000 dòng rồi đếm, nên gauge
+		// dừng ở 1.000 dù có bao nhiêu tài xế rảnh — test tải T-35 chạy 5.000.
+		c, err := a.Drivers.Counts(context.Background())
 		if err != nil {
 			return -1 // -1 phân biệt "đo lỗi" với "thật sự bằng 0"
 		}
-		return float64(len(ds))
+		return float64(c.ByStatus[driver.StatusIdle])
 	})
 
 	searching := metrics.NewGauge(m.reg, "godrive_trips_searching",

@@ -14,6 +14,7 @@ import (
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/geo"
 	"github.com/example/godrive/pkg/money"
+	"github.com/example/godrive/pkg/page"
 )
 
 // MaxPageSize chặn giao diện kéo quá nhiều dòng một lần.
@@ -72,65 +73,57 @@ type ListDriversInput struct {
 	Query    string // khớp tên / số điện thoại / biển số
 	OnlyDebt bool   // chỉ tài xế đang nợ quá hạn mức
 	Limit    int
+	// Cursor là next_cursor của trang trước; rỗng = trang đầu.
+	Cursor string
 }
 
-func (s *Service) ListDrivers(ctx context.Context, in ListDriversInput) ([]DriverRow, error) {
-	limit := clampLimit(in.Limit)
+// Page là một trang kết quả. NextCursor rỗng nghĩa là đã hết.
+type Page[T any] struct {
+	Items      []T
+	NextCursor string
+}
 
-	statuses := allDriverStatuses
+func (s *Service) ListDrivers(ctx context.Context, in ListDriversInput) (Page[DriverRow], error) {
+	limit := clampLimit(in.Limit)
+	after, err := page.Decode(in.Cursor)
+	if err != nil {
+		return Page[DriverRow]{}, err
+	}
+	f := driver.ListFilter{City: in.City, Query: strings.TrimSpace(in.Query)}
 	if in.Status != "" {
 		st := driver.Status(in.Status)
 		if !validDriverStatus(st) {
-			return nil, errs.Invalid("status_invalid", "Trạng thái tài xế không hợp lệ.")
+			return Page[DriverRow]{}, errs.Invalid("status_invalid", "Trạng thái tài xế không hợp lệ.")
 		}
-		statuses = []driver.Status{st}
+		f.Statuses = []driver.Status{st}
+	}
+	if in.KYC != "" {
+		f.KYC = driver.KYCState(in.KYC)
+	}
+	if in.OnlyDebt {
+		f.InDebtBeyond = s.debtLimit
 	}
 
-	seen := map[string]bool{}
-	rows := make([]DriverRow, 0, limit)
-	for _, st := range statuses {
-		ds, err := s.drivers.ListByStatus(ctx, st, limit)
+	// Lấy dư MỘT dòng để biết còn trang sau hay không mà không cần COUNT.
+	ds, err := s.drivers.List(ctx, f, after, limit+1)
+	if err != nil {
+		return Page[DriverRow]{}, err
+	}
+	var out Page[DriverRow]
+	if len(ds) > limit {
+		ds = ds[:limit]
+		last := ds[len(ds)-1]
+		out.NextCursor = page.Cursor{At: last.CreatedAt, ID: last.ID}.Encode()
+	}
+	out.Items = make([]DriverRow, 0, len(ds))
+	for _, d := range ds {
+		row, err := s.driverRow(ctx, d)
 		if err != nil {
-			return nil, err
+			return Page[DriverRow]{}, err
 		}
-		for _, d := range ds {
-			if seen[d.ID] {
-				continue
-			}
-			seen[d.ID] = true
-			if !matchDriverFilter(d, in) {
-				continue
-			}
-			row, err := s.driverRow(ctx, d)
-			if err != nil {
-				return nil, err
-			}
-			if in.OnlyDebt && !row.InDebt {
-				continue
-			}
-			rows = append(rows, row)
-		}
+		out.Items = append(out.Items, row)
 	}
-
-	// Thứ tự ổn định: tài xế cần chú ý lên trước (nợ, chờ duyệt), rồi theo tên.
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].InDebt != rows[j].InDebt {
-			return rows[i].InDebt
-		}
-		pi := rows[i].KYC == driver.KYCPending
-		pj := rows[j].KYC == driver.KYCPending
-		if pi != pj {
-			return pi
-		}
-		if rows[i].FullName != rows[j].FullName {
-			return rows[i].FullName < rows[j].FullName
-		}
-		return rows[i].ID < rows[j].ID
-	})
-	if len(rows) > limit {
-		rows = rows[:limit]
-	}
-	return rows, nil
+	return out, nil
 }
 
 func (s *Service) GetDriver(ctx context.Context, driverID string) (*DriverRow, error) {
@@ -312,48 +305,40 @@ func (s *Service) driverRow(ctx context.Context, d *driver.Driver) (DriverRow, e
 type ListTripsInput struct {
 	Status string // rỗng = tất cả
 	Limit  int
+	Cursor string // next_cursor của trang trước; rỗng = trang đầu
 }
 
-func (s *Service) ListTrips(ctx context.Context, in ListTripsInput) ([]TripRow, error) {
+func (s *Service) ListTrips(ctx context.Context, in ListTripsInput) (Page[TripRow], error) {
 	limit := clampLimit(in.Limit)
-
-	statuses := allTripStatuses
+	after, err := page.Decode(in.Cursor)
+	if err != nil {
+		return Page[TripRow]{}, err
+	}
+	var statuses []trip.Status
 	if in.Status != "" {
 		st := trip.Status(in.Status)
 		if !validTripStatus(st) {
-			return nil, errs.Invalid("status_invalid", "Trạng thái chuyến không hợp lệ.")
+			return Page[TripRow]{}, errs.Invalid("status_invalid", "Trạng thái chuyến không hợp lệ.")
 		}
 		statuses = []trip.Status{st}
 	}
-
-	now := s.clk.Now()
-	seen := map[string]bool{}
-	rows := make([]TripRow, 0, limit)
-	for _, st := range statuses {
-		ts, err := s.trips.ListByStatus(ctx, st, limit)
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range ts {
-			if seen[t.ID] {
-				continue
-			}
-			seen[t.ID] = true
-			rows = append(rows, tripRow(t, now))
-		}
-	}
-
 	// Mới nhất lên đầu — vận hành quan tâm cái đang xảy ra.
-	sort.Slice(rows, func(i, j int) bool {
-		if !rows[i].RequestedAt.Equal(rows[j].RequestedAt) {
-			return rows[i].RequestedAt.After(rows[j].RequestedAt)
-		}
-		return rows[i].ID > rows[j].ID
-	})
-	if len(rows) > limit {
-		rows = rows[:limit]
+	ts, err := s.trips.List(ctx, statuses, after, limit+1)
+	if err != nil {
+		return Page[TripRow]{}, err
 	}
-	return rows, nil
+	var out Page[TripRow]
+	if len(ts) > limit {
+		ts = ts[:limit]
+		last := ts[len(ts)-1]
+		out.NextCursor = page.Cursor{At: last.RequestedAt, ID: last.ID}.Encode()
+	}
+	now := s.clk.Now()
+	out.Items = make([]TripRow, 0, len(ts))
+	for _, t := range ts {
+		out.Items = append(out.Items, tripRow(t, now))
+	}
+	return out, nil
 }
 
 func (s *Service) GetTrip(ctx context.Context, tripID string) (*TripRow, error) {
@@ -464,68 +449,44 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 	var ov Overview
 	ov.GeneratedAt = s.clk.Now()
 
-	for _, st := range allDriverStatuses {
-		ds, err := s.drivers.ListByStatus(ctx, st, MaxPageSize)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range ds {
-			if d.KYC == driver.KYCPending {
-				ov.Drivers.PendingKYC++
-			}
-		}
-		switch st {
-		case driver.StatusIdle:
-			ov.Drivers.Online = len(ds)
-		case driver.StatusAssigned, driver.StatusOnTrip:
-			ov.Drivers.OnTrip += len(ds)
-		case driver.StatusOffline:
-			ov.Drivers.Offline = len(ds)
-		case driver.StatusSuspended:
-			ov.Drivers.Suspended = len(ds)
-		}
+	// Đếm bằng CSDL. Trước T-26 trang này nạp tối đa 200 dòng mỗi trạng thái
+	// rồi đếm số dòng nạp được — tức mọi con số dừng ở 200, và doanh thu chỉ
+	// cộng 200 chuyến bất kỳ, mà trông vẫn như một con số thật.
+	dc, err := s.drivers.Counts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ov.Drivers.Online = dc.ByStatus[driver.StatusIdle]
+	ov.Drivers.OnTrip = dc.ByStatus[driver.StatusAssigned] + dc.ByStatus[driver.StatusOnTrip]
+	ov.Drivers.Offline = dc.ByStatus[driver.StatusOffline]
+	ov.Drivers.Suspended = dc.ByStatus[driver.StatusSuspended]
+	ov.Drivers.PendingKYC = dc.PendingKYC
+
+	// Chuyến xong/huỷ/hết hạn và tiền: tính từ 0 giờ hôm nay theo giờ VN.
+	ov.Since = driver.TodayVN(ov.GeneratedAt)
+	ts, err := s.trips.Stats(ctx, ov.Since)
+	if err != nil {
+		return nil, err
+	}
+	ov.Trips.Searching = ts.Live[trip.StatusSearching]
+	ov.Trips.Active = ts.Live[trip.StatusAssigned] + ts.Live[trip.StatusArrived] +
+		ts.Live[trip.StatusInProgress]
+	ov.Trips.Completed = ts.Finished
+	ov.Trips.Cancelled = ts.Since[trip.StatusCancelled]
+	ov.Trips.Expired = ts.Since[trip.StatusExpired]
+	ov.Money.Gross = ts.Gross
+	ov.Money.PlatformFee = ts.PlatformFee
+	ov.Money.DriverEarn = ts.DriverEarn
+	if ts.Finished > 0 {
+		ov.Money.CashShare = float64(ts.FinishedCash) / float64(ts.Finished)
 	}
 
-	var cashTrips, paidTrips int
-	for _, st := range allTripStatuses {
-		ts, err := s.trips.ListByStatus(ctx, st, MaxPageSize)
-		if err != nil {
-			return nil, err
-		}
-		switch st {
-		case trip.StatusSearching:
-			ov.Trips.Searching = len(ts)
-		case trip.StatusAssigned, trip.StatusArrived, trip.StatusInProgress:
-			ov.Trips.Active += len(ts)
-		case trip.StatusCancelled:
-			ov.Trips.Cancelled = len(ts)
-		case trip.StatusExpired:
-			ov.Trips.Expired = len(ts)
-		}
-		// Doanh thu tính trên chuyến đã hoàn tất hoặc đã ghi sổ.
-		if st == trip.StatusCompleted || st == trip.StatusPaid {
-			ov.Trips.Completed += len(ts)
-			for _, t := range ts {
-				ov.Money.Gross += t.Fare
-				ov.Money.PlatformFee += t.PlatformFee
-				ov.Money.DriverEarn += t.DriverEarn
-				paidTrips++
-				if t.PaymentMethod == trip.PayCash {
-					cashTrips++
-				}
-			}
-		}
-	}
-	if paidTrips > 0 {
-		ov.Money.CashShare = float64(cashTrips) / float64(paidTrips)
-	}
-
-	ov.Alerts = s.alerts(ctx, &ov)
+	ov.Alerts = s.alerts(ctx, &ov, dc)
 	return &ov, nil
 }
 
 // alerts nêu những việc vận hành cần xử lý. Ngưỡng đặt ở đây, không ở giao diện.
-func (s *Service) alerts(ctx context.Context, ov *Overview) []Alert {
+func (s *Service) alerts(ctx context.Context, ov *Overview, dc driver.Counts) []Alert {
 	out := []Alert{}
 
 	if ov.Drivers.PendingKYC > 0 {
@@ -535,7 +496,8 @@ func (s *Service) alerts(ctx context.Context, ov *Overview) []Alert {
 		})
 	}
 
-	// Chuyến chờ ghép quá lâu = thiếu cung tài xế ở khu vực đó.
+	// Chuyến chờ ghép quá lâu = thiếu cung tài xế ở khu vực đó. Chuyến đang
+	// chờ luôn ít (chúng hết hạn sau vài vòng), nên nạp dòng ở đây là đủ.
 	const stuckAfter = 60 * time.Second
 	if ts, err := s.trips.ListByStatus(ctx, trip.StatusSearching, MaxPageSize); err == nil {
 		now := s.clk.Now()
@@ -553,59 +515,26 @@ func (s *Service) alerts(ctx context.Context, ov *Overview) []Alert {
 		}
 	}
 
-	// Tài xế nợ quá hạn mức không nhận được chuyến -> mất cung.
-	indebt := 0
-	for _, st := range []driver.Status{driver.StatusIdle, driver.StatusOffline} {
-		ds, err := s.drivers.ListByStatus(ctx, st, MaxPageSize)
-		if err != nil {
-			continue
-		}
-		for _, d := range ds {
-			if bal, err := s.wallet.DriverBalance(ctx, d.ID); err == nil && bal < s.debtLimit.Neg() {
-				indebt++
-			}
-		}
-	}
 	// Giấy tờ: đã hết hạn thì tài xế đang bị chặn; sắp hết hạn (≤ 7 ngày) thì
-	// vận hành còn kịp nhắc. Không gồm SUSPENDED — đã bị khoá vì lý do khác.
-	expired, urgent := 0, 0
-	now := s.clk.Now()
-	for _, st := range []driver.Status{driver.StatusIdle, driver.StatusOffline,
-		driver.StatusAssigned, driver.StatusOnTrip} {
-		ds, err := s.drivers.ListByStatus(ctx, st, MaxPageSize)
-		if err != nil {
-			continue
-		}
-		for _, d := range ds {
-			if d.KYC != driver.KYCApproved {
-				continue
-			}
-			if as := d.Documents.Alerts(now); len(as) > 0 {
-				switch as[0].Level {
-				case driver.AlertExpired:
-					expired++
-				case driver.AlertUrgent:
-					urgent++
-				}
-			}
-		}
-	}
-	if expired > 0 {
+	// vận hành còn kịp nhắc.
+	if dc.DocsExpired > 0 {
 		out = append(out, Alert{
-			Level: AlertWarn, Code: "documents_expired", Count: expired,
+			Level: AlertWarn, Code: "documents_expired", Count: dc.DocsExpired,
 			Message: "tài xế bị chặn nhận chuyến do giấy tờ hết hạn",
 		})
 	}
-	if urgent > 0 {
+	if dc.DocsExpiring > 0 {
 		out = append(out, Alert{
-			Level: AlertInfo, Code: "documents_expiring", Count: urgent,
+			Level: AlertInfo, Code: "documents_expiring", Count: dc.DocsExpiring,
 			Message: "tài xế có giấy tờ hết hạn trong 7 ngày tới",
 		})
 	}
 
-	if indebt > 0 {
+	// Tài xế nợ quá hạn mức không nhận được chuyến -> mất cung. Đếm theo cột
+	// cache số dư, có thể chậm vài giây so với sổ cái.
+	if dc.InDebt > 0 {
 		out = append(out, Alert{
-			Level: AlertWarn, Code: "drivers_in_debt", Count: indebt,
+			Level: AlertWarn, Code: "drivers_in_debt", Count: dc.InDebt,
 			Message: "tài xế bị chặn nhận chuyến do nợ vượt hạn mức",
 		})
 	}
@@ -617,26 +546,6 @@ func (s *Service) alerts(ctx context.Context, ov *Overview) []Alert {
 		})
 	}
 	return out
-}
-
-func matchDriverFilter(d *driver.Driver, in ListDriversInput) bool {
-	if in.KYC != "" && string(d.KYC) != in.KYC {
-		return false
-	}
-	if in.City != "" && d.City != in.City {
-		return false
-	}
-	if in.Query != "" && !containsFold(d.FullName, in.Query) &&
-		!containsFold(d.Phone, in.Query) && !containsFold(d.Vehicle.Plate, in.Query) {
-		return false
-	}
-	return true
-}
-
-// containsFold so khớp không phân biệt hoa thường — tìm kiếm gõ nhanh trên
-// bảng tài xế (tên có dấu tiếng Việt vẫn khớp theo byte, đủ dùng ở giai đoạn này).
-func containsFold(haystack, needle string) bool {
-	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
 
 func validDriverStatus(s driver.Status) bool {

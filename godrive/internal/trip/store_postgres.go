@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/example/godrive/pkg/errs"
+	"github.com/example/godrive/pkg/money"
+	"github.com/example/godrive/pkg/page"
 )
 
 // TxEnqueuer ghi sự kiện vào outbox bằng chính transaction đang mở.
@@ -194,4 +197,78 @@ func (r *PostgresRepo) list(ctx context.Context, q string, args ...any) ([]*Trip
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+func (r *PostgresRepo) List(ctx context.Context, statuses []Status, after page.Cursor, limit int) ([]*Trip, error) {
+	ss := make([]string, len(statuses))
+	for i, s := range statuses {
+		ss[i] = string(s)
+	}
+	// Tham số rỗng thay cho "không lọc" để chỉ có MỘT câu SQL — một câu thì
+	// một kế hoạch truy vấn, dễ đọc EXPLAIN hơn nhiều nhánh nối chuỗi.
+	var at any
+	if !after.IsZero() {
+		at = after.At
+	}
+	return r.list(ctx, `SELECT `+tripCols+` FROM trips
+        WHERE (cardinality($1::text[]) = 0 OR status = ANY($1::text[]))
+          AND ($2::timestamptz IS NULL OR (requested_at, id) < ($2, $3))
+        ORDER BY requested_at DESC, id DESC LIMIT $4`, ss, at, after.ID, limit)
+}
+
+func (r *PostgresRepo) Stats(ctx context.Context, since time.Time) (Stats, error) {
+	st := Stats{Live: map[Status]int{}, Since: map[Status]int{}}
+	live := make([]string, len(LiveStatuses))
+	for i, s := range LiveStatuses {
+		live[i] = string(s)
+	}
+	// Dùng chỉ mục một phần trips_live_status_idx.
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT status, count(*) FROM trips WHERE status = ANY($1::text[]) GROUP BY status`, live)
+	if err != nil {
+		return st, errs.Wrap(errs.KindInternal, "db_error", "db", err)
+	}
+	for rows.Next() {
+		var s Status
+		var n int
+		if err := rows.Scan(&s, &n); err != nil {
+			rows.Close()
+			return st, errs.Wrap(errs.KindInternal, "db_error", "db", err)
+		}
+		st.Live[s] = n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return st, errs.Wrap(errs.KindInternal, "db_error", "db", err)
+	}
+
+	// Dùng chỉ mục trips_requested_page_idx để chỉ đọc chuyến từ mốc since.
+	rows, err = r.db.QueryContext(ctx, `
+        SELECT status, count(*),
+               coalesce(sum(fare), 0), coalesce(sum(platform_fee), 0), coalesce(sum(driver_earn), 0),
+               count(*) FILTER (WHERE payment_method = 'CASH')
+        FROM trips WHERE requested_at >= $1 GROUP BY status`, since)
+	if err != nil {
+		return st, errs.Wrap(errs.KindInternal, "db_error", "db", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			s                  Status
+			n, cash            int
+			fare, fee, earning int64
+		)
+		if err := rows.Scan(&s, &n, &fare, &fee, &earning, &cash); err != nil {
+			return st, errs.Wrap(errs.KindInternal, "db_error", "db", err)
+		}
+		st.Since[s] = n
+		if s == StatusCompleted || s == StatusPaid {
+			st.Finished += n
+			st.FinishedCash += cash
+			st.Gross += money.VND(fare)
+			st.PlatformFee += money.VND(fee)
+			st.DriverEarn += money.VND(earning)
+		}
+	}
+	return st, rows.Err()
 }

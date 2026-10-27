@@ -10,6 +10,7 @@ import (
 	"github.com/example/godrive/pkg/errs"
 	"github.com/example/godrive/pkg/id"
 	"github.com/example/godrive/pkg/idem"
+	"github.com/example/godrive/pkg/page"
 )
 
 // FreeCancelWindow là cửa sổ huỷ miễn phí MẶC ĐỊNH: khách huỷ trong 2 phút đầu
@@ -373,6 +374,16 @@ func (s *Service) ListByRider(ctx context.Context, riderID string, limit int) ([
 
 func (s *Service) ListSearching(ctx context.Context, limit int) ([]*Trip, error) {
 	return s.ListByStatus(ctx, StatusSearching, limit)
+}
+
+// List trả một trang chuyến, mới đặt trước. Xem Repository.List.
+func (s *Service) List(ctx context.Context, statuses []Status, after page.Cursor, limit int) ([]*Trip, error) {
+	return s.repo.List(ctx, statuses, after, limit)
+}
+
+// Stats là số liệu cho trang tổng quan; xem Stats về hai khung thời gian.
+func (s *Service) Stats(ctx context.Context, since time.Time) (Stats, error) {
+	return s.repo.Stats(ctx, since)
 }
 
 // ListByStatus liệt kê chuyến theo trạng thái. Dùng cho dispatcher và bảng
